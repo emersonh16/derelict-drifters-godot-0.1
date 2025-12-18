@@ -23,14 +23,3 @@ func _process(delta):
 	var mouse_pos = get_global_mouse_position()
 	var dir = mouse_pos - global_position
 	beam.rotation = dir.angle()
-
-	if miasma:
-		var start = beam.global_position
-		var dir_norm = dir.normalized()
-		var length = 120        # beam reach
-		var step = 3            # tile size (match your 8x8 diamonds)
-
-		var dist = 0
-		while dist <= length:
-			miasma.clear_at_world_pos(start + dir_norm * dist)
-			dist += step
