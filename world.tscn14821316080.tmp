@@ -46,3 +46,5 @@ script = ExtResource("2_pkg7o")
 
 [node name="FogVisual" type="Node2D" parent="Miasma"]
 script = ExtResource("6_dwbse")
+fog_color = null
+clear_color = null

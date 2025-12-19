@@ -81,7 +81,7 @@ func _physics_process(_delta):
 	var forward: Vector2 = Vector2.RIGHT.rotated(global_rotation)
 
 	if mode == BeamMode.BUBBLE and circle_radius > 0.01:
-		miasma.clear_circle_world(origin, circle_radius, step)
+		miasma.clear_circle_world(origin, circle_radius)
 
 	elif mode == BeamMode.CONE:
 		var end_radius: float = tan(beam_half_angle) * beam_length * cone_fill_scale
@@ -97,7 +97,7 @@ func _physics_process(_delta):
 			var offset := -half_width
 			while offset <= half_width:
 				var p: Vector2 = origin + fwd * dist + right * offset
-				miasma.clear_circle_world(p, step * 1.5, step * 1.5)
+				miasma.clear_circle_world(p, step * 1.5)
 				offset += step
 
 			dist += step
@@ -110,7 +110,7 @@ func _physics_process(_delta):
 			while angle <= PI / 2.0:
 				var dir := fwd.rotated(angle)
 				var p := cap_center + dir * r
-				miasma.clear_circle_world(p, step * 0.75, step)
+				miasma.clear_circle_world(p, step * 0.75)
 				angle += step / max(end_radius, 1.0)
 			r += step
 
@@ -120,7 +120,7 @@ func _physics_process(_delta):
 		var dist: float = 0.0
 		while dist <= beam_length:
 			var p: Vector2 = origin + forward * dist
-			miasma.clear_circle_world(p, laser_radius, step)
+			miasma.clear_circle_world(p, laser_radius)
 			dist += step
 
 	_last_pos = origin
