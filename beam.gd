@@ -20,6 +20,9 @@ var _last_focus: float
 var _beam_dirty := true
 @export var cone_fill_scale := 0.65
 @export var beam_origin_offset: Vector2 = Vector2.ZERO
+var _beam_cooldown := 0
+@export var beam_update_interval := 2  # update every 2 physics frames
+
 
 
 
@@ -43,8 +46,16 @@ func _physics_process(_delta):
 		return
 
 	apply_beam_focus()
+
 	if not _beam_dirty:
 		return
+
+	_beam_cooldown += 1
+	if _beam_cooldown < beam_update_interval:
+		return
+
+	_beam_cooldown = 0
+
 
 
 	var forward: Vector2 = Vector2.RIGHT.rotated(global_rotation)
@@ -66,7 +77,7 @@ func _physics_process(_delta):
 			var offset := -half_width
 			while offset <= half_width:
 				var p: Vector2 = origin + fwd * dist + right * offset
-				miasma.clear_circle_world(p, step * 1, step)
+				miasma.clear_circle_world(p, step * 1.5, step * 1.5)
 				offset += step
 
 			dist += step
