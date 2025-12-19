@@ -1,51 +1,71 @@
 extends Node2D
 
 enum BeamMode { CONE, LASER, BUBBLE }
+
+# --- Beam configuration ---
 @export var mode : BeamMode = BeamMode.CONE
 @export var beam_length := 120.0
 @export var beam_half_angle := deg_to_rad(30.0)
 @export var circle_radius := 20.0
+@export var laser_radius := 3.0
 @export var step := 4.0
 @export var width_scale := 0.2
-@export var laser_radius := 3.0
+@export var cone_fill_scale := 0.65
+@export var beam_origin_offset: Vector2 = Vector2.ZERO
+
+# --- Focus / mode control ---
 var beam_focus := 0.0
 @export var focus_step := 0.1
 @export var focus_min := 0.0
 @export var focus_max := 3.0
 @export var cone_length_min := 60.0
-@export var cone_length_max := 170.0   # just under laser
+@export var cone_length_max := 170.0
+
+# --- Update throttling ---
+var _beam_dirty := true
+var _beam_cooldown := 0
+@export var beam_update_interval := 2
+
+# --- State cache ---
 var _last_pos: Vector2
 var _last_rot: float
 var _last_focus: float
-var _beam_dirty := true
-@export var cone_fill_scale := 0.65
-@export var beam_origin_offset: Vector2 = Vector2.ZERO
-var _beam_cooldown := 0
-@export var beam_update_interval := 2  # update every 2 physics frames
-
-
-
-
 
 @onready var miasma := get_tree().get_first_node_in_group("miasma")
+
+
+func _ready():
+	set_process_input(true)
+
+
+func _process(_delta):
+	queue_redraw()
+
+
+func _unhandled_input(event):
+	if event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			beam_focus = snapped(beam_focus + focus_step, 0.1)
+			_beam_dirty = true
+			queue_redraw()
+
+		elif event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			beam_focus = max(beam_focus - focus_step, focus_min)
+			_beam_dirty = true
+			queue_redraw()
+
 
 func _physics_process(_delta):
 	var origin := global_position + beam_origin_offset.rotated(global_rotation)
 	if origin != _last_pos or global_rotation != _last_rot:
 		_beam_dirty = true
-	if Input.is_action_just_pressed("beam_scroll_down"):
-		beam_focus = min(beam_focus + focus_step, focus_max)
-		_beam_dirty = true
 
-	if Input.is_action_just_pressed("beam_scroll_up"):
-		beam_focus = max(beam_focus - focus_step, focus_min)
-		_beam_dirty = true
 
+
+	apply_beam_focus()
 
 	if not miasma:
 		return
-
-	apply_beam_focus()
 
 	if not _beam_dirty:
 		return
@@ -107,7 +127,6 @@ func _physics_process(_delta):
 	_last_rot = global_rotation
 	_last_focus = beam_focus
 	_beam_dirty = false
-	queue_redraw()  # keep here, but ONLY after dirty work
 
 
 
