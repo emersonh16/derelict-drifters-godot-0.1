@@ -23,17 +23,13 @@ func _physics_process(_delta):
 		var w := -max_width
 		while w <= max_width:
 			var p := origin + forward * dist + forward.orthogonal() * w
-			miasma.clear_at_world_pos(p)
+			var radius := tan(beam_half_angle) * dist * width_scale
+			miasma.clear_circle_world(p, radius, step)
 			w += step
 		dist += step
 
-	# --- CIRCLE CAP ---
-	var center := origin + forward * beam_length
-	var x := -circle_radius
-	while x <= circle_radius:
-		var y := -circle_radius
-		while y <= circle_radius:
-			if Vector2(x, y).length() <= circle_radius:
-				miasma.clear_at_world_pos(center + Vector2(x, y))
-			y += step
-		x += step
+	miasma.clear_circle_world(
+		origin + forward * beam_length,
+		circle_radius,
+		step
+)
