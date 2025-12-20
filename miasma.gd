@@ -5,6 +5,7 @@ extends TileMapLayer
 @export var fog_atlas: Vector2i = Vector2i(0, 0)
 @export var buffer_tiles := 24
 @export var forget_buffer_tiles := 24
+var cleared_cells := {}
 
 
 var last_center := Vector2i(999999, 999999)
