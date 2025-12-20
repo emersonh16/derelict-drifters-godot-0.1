@@ -32,6 +32,8 @@ var _last_rot: float
 var _last_focus: float
 
 @onready var miasma := get_tree().get_first_node_in_group("miasma")
+@onready var player := get_tree().get_first_node_in_group("player")
+
 
 
 func _ready():
@@ -40,6 +42,7 @@ func _ready():
 
 func _process(_delta):
 	queue_redraw()
+
 
 
 func _unhandled_input(event):
@@ -67,21 +70,18 @@ func _physics_process(_delta):
 	if not miasma:
 		return
 
-	if not _beam_dirty:
-		return
-
-	_beam_cooldown += 1
-	if _beam_cooldown < beam_update_interval:
-		return
-
-	_beam_cooldown = 0
 
 
 
 	var forward: Vector2 = Vector2.RIGHT.rotated(global_rotation)
 
 	if mode == BeamMode.BUBBLE and circle_radius > 0.01:
-		miasma.clear_circle_world(origin, circle_radius)
+		if player:
+			miasma.clear_fog_at_world(player.global_position)
+
+
+
+
 
 	elif mode == BeamMode.CONE:
 		var end_radius: float = tan(beam_half_angle) * beam_length * cone_fill_scale
@@ -97,7 +97,7 @@ func _physics_process(_delta):
 			var offset := -half_width
 			while offset <= half_width:
 				var p: Vector2 = origin + fwd * dist + right * offset
-				miasma.clear_circle_world(p, step * 1.5)
+				miasma.clear_fog_at_world(p)
 				offset += step
 
 			dist += step
@@ -110,7 +110,7 @@ func _physics_process(_delta):
 			while angle <= PI / 2.0:
 				var dir := fwd.rotated(angle)
 				var p := cap_center + dir * r
-				miasma.clear_circle_world(p, step * 0.75)
+				miasma.clear_fog_at_world(p)
 				angle += step / max(end_radius, 1.0)
 			r += step
 
@@ -120,13 +120,8 @@ func _physics_process(_delta):
 		var dist: float = 0.0
 		while dist <= beam_length:
 			var p: Vector2 = origin + forward * dist
-			miasma.clear_circle_world(p, laser_radius)
+			miasma.clear_fog_at_world(p)
 			dist += step
-
-	_last_pos = origin
-	_last_rot = global_rotation
-	_last_focus = beam_focus
-	_beam_dirty = false
 
 
 

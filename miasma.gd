@@ -1,95 +1,60 @@
-extends Node2D
+extends TileMapLayer
 
-# --- Grid config ---
-@export var tile_size := 8            # world pixels per fog tile
-@export var margin_tiles := 8          # extra tiles beyond viewport
+# Which tile to paint for fog (TileSet source + atlas coords)
+@export var fog_source_id: int = 0
+@export var fog_atlas: Vector2i = Vector2i(0, 0)
+@export var buffer_tiles := 24
+@export var forget_buffer_tiles := 24
 
-# --- Runtime ---
-var _grid_w := 0
-var _grid_h := 0
-var _fog := {}  # Dictionary<Vector2i, bool>   true = fog, false = clear
-var _origin_cell := Vector2i.ZERO      # top-left cell in world-space tiles
 
-@onready var _player := get_tree().get_first_node_in_group("player")
+var last_center := Vector2i(999999, 999999)
 
+# Cells we have "carved out" (world-anchored)
+var cleared := {} # Dictionary: Vector2i -> true
 
 func _ready():
-	_build_grid()
+	add_to_group("miasma")
 
 
-func _process(_delta):
-	_follow_player()
-
-
-# -------------------------
-# Public API (used later)
-# -------------------------
-
-func is_fog_at_world(world_pos: Vector2) -> bool:
-	var cell := Vector2i(
-		floor(world_pos.x / tile_size),
-		floor(world_pos.y / tile_size)
-	)
-	return _fog.get(cell, true)
-
-func clear_at_world(world_pos: Vector2):
-	var cell := Vector2i(
-		floor(world_pos.x / tile_size),
-		floor(world_pos.y / tile_size)
-	)
-	_fog[cell] = false
-
-# -------------------------
-# Internal
-# -------------------------
-
-func _build_grid():
-	pass
-
-
-func _follow_player():
+func _physics_process(_delta):
 	var cam := get_viewport().get_camera_2d()
 	if not cam:
 		return
 
-	var vp := get_viewport_rect().size
-	var top_left_world := cam.global_position - vp * 0.5
+	var center := local_to_map(to_local(cam.global_position))
 
-	_origin_cell = Vector2i(
-		floor(top_left_world.x / tile_size),
-		floor(top_left_world.y / tile_size)
-	)
+	var viewport_size := cam.get_viewport_rect().size
+	var tile_size := tile_set.tile_size
 
+	var radius_x := int(ceil(viewport_size.x / tile_size.x)) + buffer_tiles
+	var radius_y := int(ceil(viewport_size.y / tile_size.y)) + buffer_tiles
 
+	var forget_radius_x := radius_x + forget_buffer_tiles
+	var forget_radius_y := radius_y + forget_buffer_tiles
 
-
-func _world_to_cell(world_pos: Vector2) -> Vector2i:
-	var local := world_pos - Vector2(_origin_cell) * tile_size
-	return Vector2i(
-		floor(local.x / tile_size),
-		floor(local.y / tile_size)
-	)
-
-
-func _idx(c: Vector2i) -> int:
-	return c.y * _grid_w + c.x
 	
-func clear_circle_world(world_pos: Vector2, radius_px: float):
-	if radius_px <= 0.0:
+	if center == last_center:
 		return
 
-	var center := Vector2i(
-		floor(world_pos.x / tile_size),
-		floor(world_pos.y / tile_size)
-	)
+	last_center = center
+	_fill_fog_rect(center, radius_x, radius_y, forget_radius_x, forget_radius_y)
 
-	var r_tiles := int(ceil(radius_px / float(tile_size)))
 
-	for dy in range(-r_tiles, r_tiles + 1):
-		for dx in range(-r_tiles, r_tiles + 1):
-			var cell := center + Vector2i(dx, dy)
-			var p := Vector2(dx, dy) * float(tile_size)
-			if p.length() > radius_px:
+func _fill_fog_rect(center: Vector2i, radius_x: int, radius_y: int, forget_radius_x: int, forget_radius_y: int) -> void:
+	for y in range(center.y - radius_y, center.y + radius_y + 1):
+		for x in range(center.x - radius_x, center.x + radius_x + 1):
+			var cell := Vector2i(x, y)
+			if cleared.has(cell):
 				continue
+			set_cell(cell, fog_source_id, fog_atlas)
 
-			_fog[cell] = false
+	for cell in cleared.keys():
+		if abs(cell.x - center.x) > forget_radius_x or abs(cell.y - center.y) > forget_radius_y:
+			cleared.erase(cell)
+
+
+# (We will use this in Step 2/3)
+func clear_fog_at_world(world_pos: Vector2) -> void:
+	var cell := local_to_map(to_local(world_pos))
+	cleared[cell] = true
+	set_cell(cell, -1)
