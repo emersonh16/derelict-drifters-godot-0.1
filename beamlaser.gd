@@ -17,6 +17,12 @@ func to_iso(v: Vector2) -> Vector2:
 	return Vector2(v.x - v.y, (v.x + v.y) * ISO_Y_SCALE)
 
 func _process(_delta):
+	var cone := _get_cone()
+	if cone:
+		# We must toggle visibility in _process. 
+		# If we do it in _draw, a hidden laser can never turn itself on.
+		visible = (cone.focus >= 0.95)
+	
 	if not visible_in_editor and Engine.is_editor_hint():
 		visible = false
 	queue_redraw()
@@ -27,8 +33,8 @@ func _draw():
 	if not cone:
 		return
 
-	# Laser only activates once cone is fully focused
-	if cone.focus < 1.0:
+	# Safety check: do not draw if focus is below the handoff threshold
+	if cone.focus < 0.95:
 		return
 
 	var aim_angle: float = cone.aim_angle
@@ -72,3 +78,79 @@ func _get_cone() -> Node:
 	if not get_parent():
 		return null
 	return get_parent().get_node_or_null("BeamCone")
+	
+	
+func laser_hits_point_topdown(p: Vector2) -> bool:
+	if not visible:
+		return false
+
+	var t: float = clamp(get_parent().focus, 0.0, 1.0)
+
+	var length_px: float = lerp(
+		LASER_MIN_LENGTH_TILES,
+		LASER_MAX_LENGTH_TILES,
+		t
+	) * MIASMA_TILE_X
+
+	var radius_px: float = lerp(
+		LASER_MIN_HALF_WIDTH_TILES,
+		LASER_MAX_HALF_WIDTH_TILES,
+		t
+	) * MIASMA_TILE_X
+
+	var origin := global_position
+	var dir := Vector2.RIGHT.rotated(global_rotation)
+
+	var a := origin
+	var b := origin + dir * length_px
+
+	var ab := b - a
+	var ap := p - a
+
+	var ab_len_sq := ab.length_squared()
+	if ab_len_sq == 0.0:
+		return false
+
+	var u: float = clamp(ap.dot(ab) / ab_len_sq, 0.0, 1.0)
+	var closest: Vector2 = a + ab * u
+
+	return p.distance_to(closest) <= radius_px
+
+
+func laser_hits_circle_topdown(p: Vector2, r: float) -> bool:
+	if not visible:
+		return false
+
+	var t: float = clamp(get_parent().focus, 0.0, 1.0)
+
+	var length_px: float = lerp(
+		LASER_MIN_LENGTH_TILES,
+		LASER_MAX_LENGTH_TILES,
+		t
+	) * MIASMA_TILE_X
+
+	var radius_px: float = (
+		lerp(
+			LASER_MIN_HALF_WIDTH_TILES,
+			LASER_MAX_HALF_WIDTH_TILES,
+			t
+		) * MIASMA_TILE_X
+	) + r
+
+	var origin := global_position
+	var dir := Vector2.RIGHT.rotated(global_rotation)
+
+	var a := origin
+	var b := origin + dir * length_px
+
+	var ab := b - a
+	var ap := p - a
+
+	var ab_len_sq := ab.length_squared()
+	if ab_len_sq == 0.0:
+		return false
+
+	var u: float = clamp(ap.dot(ab) / ab_len_sq, 0.0, 1.0)
+	var closest: Vector2 = a + ab * u
+
+	return p.distance_to(closest) <= radius_px

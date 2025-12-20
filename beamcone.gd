@@ -23,7 +23,7 @@ func _draw():
 		return
 
 	# Hard cutoff: cone turns off once laser engages
-	if focus >= 1.0:
+	if focus >= 0.95:
 		return
 
 	var t: float = clamp(focus, 0.0, 1.0)
@@ -80,7 +80,10 @@ func _draw():
 		
 func _process(_delta):
 	# Mode constraint: when bubble mode hides the cone, cone clearing must be OFF.
-	if not visible:
+	# Threshold lowered to 0.95 to match the laser's activation.
+	if not visible or focus >= 0.95:
+		if focus >= 0.95:
+			queue_redraw() 
 		return
 
 	queue_redraw()
