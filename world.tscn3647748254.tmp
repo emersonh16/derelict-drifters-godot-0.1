@@ -49,6 +49,7 @@ texture = ExtResource("3_tlwt5")
 
 [node name="BeamBubble" type="Node2D" parent="Player"]
 script = ExtResource("6_dwbse")
+bubble_tiles = null
 
 [node name="Camera2D" type="Camera2D" parent="Player"]
 
