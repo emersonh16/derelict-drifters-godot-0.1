@@ -40,7 +40,7 @@ script = ExtResource("4_gbfbk")
 
 [node name="Camera2D" type="Camera2D" parent="Player"]
 
-[node name="Miasma" type="Node2D" parent="."]
+[node name="Miasma" type="Node2D" parent="." groups=["miasma"]]
 script = ExtResource("2_pkg7o")
 
 [node name="FogSprite" type="Sprite2D" parent="."]

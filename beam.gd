@@ -35,7 +35,6 @@ var _last_focus: float
 @onready var player := get_tree().get_first_node_in_group("player")
 
 
-
 func _ready():
 	set_process_input(true)
 
@@ -69,7 +68,7 @@ func _physics_process(_delta):
 
 	if not miasma:
 		return
-
+	print("MIASMA FOUND:", miasma)
 
 
 
@@ -77,7 +76,7 @@ func _physics_process(_delta):
 
 	if mode == BeamMode.BUBBLE and circle_radius > 0.01:
 		if player:
-			miasma.clear_fog_at_world(player.global_position)
+			miasma.clear_at_world(player.global_position, 6)
 
 
 
@@ -97,7 +96,7 @@ func _physics_process(_delta):
 			var offset := -half_width
 			while offset <= half_width:
 				var p: Vector2 = origin + fwd * dist + right * offset
-				miasma.clear_fog_at_world(p)
+				miasma.clear_at_world(p, 6)
 				offset += step
 
 			dist += step
@@ -110,7 +109,7 @@ func _physics_process(_delta):
 			while angle <= PI / 2.0:
 				var dir := fwd.rotated(angle)
 				var p := cap_center + dir * r
-				miasma.clear_fog_at_world(p)
+				miasma.clear_at_world(p, 6)
 				angle += step / max(end_radius, 1.0)
 			r += step
 
@@ -120,7 +119,7 @@ func _physics_process(_delta):
 		var dist: float = 0.0
 		while dist <= beam_length:
 			var p: Vector2 = origin + forward * dist
-			miasma.clear_fog_at_world(p)
+			miasma.clear_at_world(p, 6)
 			dist += step
 
 

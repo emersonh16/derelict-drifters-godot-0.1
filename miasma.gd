@@ -7,8 +7,16 @@ var cam: Camera2D
 
 var fog_image: Image
 var fog_texture: ImageTexture
+var fog_dirty := false
+
+func world_to_iso(p: Vector2) -> Vector2:
+	return Vector2(
+		p.x - p.y,
+		(p.x + p.y) * 0.5
+	)
 
 func _ready():
+	add_to_group("miasma")
 	cam = get_viewport().get_camera_2d()
 
 	fog_image = Image.create(
@@ -18,9 +26,9 @@ func _ready():
 		Image.FORMAT_RGBA8
 	)
 	fog_image.fill(Color(0.6, 0.0, 0.6, 0.85))
-
 	fog_texture = ImageTexture.create_from_image(fog_image)
 	fog.texture = fog_texture
+
 
 
 		
@@ -31,10 +39,12 @@ func _process(_delta):
 	if not cam:
 		return
 
-	fog.global_position = cam.global_position
 
 	var mat := fog.material as ShaderMaterial
-	mat.set_shader_parameter("world_offset", cam.global_position * 0.001)
+	mat.set_shader_parameter(
+		"world_offset",
+		world_to_iso(cam.global_position) * 0.001
+	)
 
 	var center_cell := Vector2i(
 		floor(cam.global_position.x / cell_size),
@@ -43,5 +53,32 @@ func _process(_delta):
 
 	if center_cell != last_center_cell:
 		last_center_cell = center_cell
-		fog_image.fill(Color(0.6, 0.0, 0.6, 0.85))
+	
+	clear_at_world(cam.global_position, 6)
+	if fog_dirty:
 		fog_texture.update(fog_image)
+		fog_dirty = false
+
+func clear_at_world(world_pos: Vector2, radius := 6):
+	print("CLEAR", world_pos)
+	var iso_world := world_to_iso(world_pos)
+	var iso_cam := world_to_iso(cam.global_position)
+	var tex_pos := (iso_world - iso_cam) + Vector2(fog_size) * 0.5
+
+	var cx := int(tex_pos.x)
+	var cy := int(tex_pos.y)
+
+	for y in range(-radius, radius + 1):
+		for x in range(-radius, radius + 1):
+			if x * x + y * y > radius * radius:
+				continue
+
+			var px := cx + x
+			var py := cy + y
+
+			if px < 0 or py < 0 or px >= fog_size.x or py >= fog_size.y:
+				continue
+
+			fog_image.set_pixel(px, py, Color(1, 1, 1, 0))
+
+	fog_dirty = true
