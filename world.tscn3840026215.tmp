@@ -31,6 +31,7 @@ tile_map_data = PackedByteArray("AAD/////AwAAAAAAAAD//wAAAwAAAAAAAAD//wEAAwAAAAA
 tile_set = ExtResource("1_tlwt5")
 
 [node name="Miasma" type="TileMapLayer" parent="."]
+visible = false
 z_index = 1
 y_sort_enabled = true
 tile_set = SubResource("TileSet_pkg7o")
