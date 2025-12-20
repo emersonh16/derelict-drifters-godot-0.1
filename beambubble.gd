@@ -9,33 +9,10 @@ const MIASMA_TILE_Y := 8.0
 
 @onready var miasma = get_tree().get_first_node_in_group("miasma")
 
-@export var focus := 0.0
-@export var FOCUS_STEP := 0.1
-@onready var beam_cone = get_parent().get_node("BeamPivot/BeamCone")
-
-
-
 
 func _ready():
 	queue_redraw()
 
-func _unhandled_input(event):
-	if event is InputEventMouseButton and event.pressed:
-		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			if bubble_tiles < MAX_BUBBLE_TILES:
-				bubble_tiles += 1
-			else:
-				focus = min(1.0, focus + FOCUS_STEP)
-			queue_redraw()
-
-		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			if focus > 0.0:
-				focus = max(0.0, focus - FOCUS_STEP)
-			else:
-				bubble_tiles = max(0, bubble_tiles - 1)
-			queue_redraw()
-		if beam_cone:
-			beam_cone.focus = focus
 
 
 
@@ -125,4 +102,6 @@ func _clear_miasma():
 			
 
 func _process(_delta):
+	if not visible:
+		return
 	_clear_miasma()
