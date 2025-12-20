@@ -22,6 +22,10 @@ func _draw():
 	if not visible:
 		return
 
+	# Hard cutoff: cone turns off once laser engages
+	if focus >= 1.0:
+		return
+
 	var t: float = clamp(focus, 0.0, 1.0)
 
 	var length: float = lerp(

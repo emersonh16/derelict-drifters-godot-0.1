@@ -58,7 +58,7 @@ func _draw():
 	var c := to_iso(p1 - perp_td * half_w_px)
 	var d := to_iso(p1 + perp_td * half_w_px)
 
-	draw_colored_polygon([a, b, c, d], Color(1.0, 0.35, 0.9, 0.35))
+	draw_colored_polygon([a, b, c, d], Color(1, 0.8, 0.2, 0.35))
 
 	var core_half_w := half_w_px * CORE_WIDTH_SCALE
 	var a2 := to_iso(p0 + perp_td * core_half_w)
@@ -66,7 +66,7 @@ func _draw():
 	var c2 := to_iso(p1 - perp_td * core_half_w)
 	var d2 := to_iso(p1 + perp_td * core_half_w)
 
-	draw_colored_polygon([a2, b2, c2, d2], Color(1.0, 0.35, 0.9, 0.85))
+	draw_colored_polygon([a2, b2, c2, d2], Color(1.0, 0.8, 0.2, 1.0))
 
 func _get_cone() -> Node:
 	if not get_parent():
