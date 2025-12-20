@@ -24,4 +24,6 @@ func _physics_process(delta):
 func _process(delta):
 	var mouse_pos = get_global_mouse_position()
 	var dir = mouse_pos - global_position
+	beam.global_position = global_position
 	beam_bubble.global_position = global_position
+	beam.rotation = dir.angle()

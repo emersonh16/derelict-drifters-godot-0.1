@@ -1,12 +1,18 @@
 extends Node2D
 
 @export var bubble_tiles := 6
+@export var MAX_BUBBLE_TILES := 8
 const ISO_Y_SCALE := 0.5
 
 const MIASMA_TILE_X := 16.0
 const MIASMA_TILE_Y := 8.0
 
 @onready var miasma = get_tree().get_first_node_in_group("miasma")
+
+@export var focus := 0.0
+@export var FOCUS_STEP := 0.1
+@onready var beam_cone = get_parent().get_node("BeamPivot/BeamCone")
+
 
 
 
@@ -16,11 +22,22 @@ func _ready():
 func _unhandled_input(event):
 	if event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			bubble_tiles += 1
+			if bubble_tiles < MAX_BUBBLE_TILES:
+				bubble_tiles += 1
+			else:
+				focus = min(1.0, focus + FOCUS_STEP)
 			queue_redraw()
+
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			bubble_tiles = max(1, bubble_tiles - 1)
+			if focus > 0.0:
+				focus = max(0.0, focus - FOCUS_STEP)
+			else:
+				bubble_tiles = max(0, bubble_tiles - 1)
 			queue_redraw()
+		if beam_cone:
+			beam_cone.focus = focus
+
+
 
 func _draw():
 	# CRITICAL: cancel node rotation so shape is ground-locked
