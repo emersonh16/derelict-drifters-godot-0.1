@@ -1,4 +1,4 @@
-[gd_scene load_steps=11 format=4 uid="uid://b66te44mpyy5m"]
+[gd_scene load_steps=12 format=4 uid="uid://b66te44mpyy5m"]
 
 [ext_resource type="TileSet" uid="uid://pb4fk3nj2cmi" path="res://Tiles/world_tileset.tres" id="1_tlwt5"]
 [ext_resource type="Texture2D" uid="uid://m70kmrdxlmqx" path="res://miasma-sprite1616.png" id="2_036b0"]
@@ -7,6 +7,7 @@
 [ext_resource type="Script" uid="uid://13vey8er5k6g" path="res://player-movement.gd" id="4_aqk2v"]
 [ext_resource type="Script" uid="uid://br61t7yoa2b58" path="res://beambubble.gd" id="6_dwbse"]
 [ext_resource type="Script" uid="uid://chka3v1y4wp30" path="res://beamcone.gd" id="7_pkg7o"]
+[ext_resource type="Script" uid="uid://ppfyey4bla3" path="res://beamlaser.gd" id="8_gbfbk"]
 
 [sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_dwbse"]
 texture = ExtResource("2_036b0")
@@ -56,3 +57,6 @@ script = ExtResource("6_dwbse")
 
 [node name="BeamCone" type="Node2D" parent="Player/BeamPivot"]
 script = ExtResource("7_pkg7o")
+
+[node name="BeamLaser" type="Node2D" parent="Player/BeamPivot"]
+script = ExtResource("8_gbfbk")
