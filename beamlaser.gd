@@ -35,8 +35,6 @@ func _clear_miasma_laser():
 		return
 
 	var focus: float = clamp(cone.focus, 0.0, 1.0)
-	var aim_angle: float = cone.aim_angle
-
 	var length_px: float = lerp(
 		LASER_MIN_LENGTH_TILES * MIASMA_TILE_X,
 		LASER_MAX_LENGTH_TILES * MIASMA_TILE_X,
@@ -48,26 +46,13 @@ func _clear_miasma_laser():
 		focus
 	)
 
-	var dir_td := Vector2.RIGHT.rotated(aim_angle)
-	var end_td := dir_td * length_px
+	# Calculate isometric end point for the stamping logic
+	var dir_td := Vector2.RIGHT.rotated(cone.aim_angle)
+	var start_world := global_position
+	var end_world := global_position + to_iso(dir_td * length_px)
 
-	# Define bounding box for the iteration
-	var min_x := minf(0.0, end_td.x) - half_w_px
-	var max_x := maxf(0.0, end_td.x) + half_w_px
-	var min_y := minf(0.0, end_td.y) - half_w_px
-	var max_y := maxf(0.0, end_td.y) + half_w_px
-
-	for y in range(int(floor(min_y)), int(ceil(max_y)) + 1):
-		for x in range(int(floor(min_x)), int(ceil(max_x)) + 1):
-			var p_td := Vector2(float(x), float(y))
-			
-			# Segment check (capsule)
-			var u: float = clamp(p_td.dot(dir_td) / length_px, 0.0, 1.0)
-			var closest := dir_td * (u * length_px)
-			
-			if p_td.distance_to(closest) <= half_w_px:
-				var world_pos := global_position + to_iso(p_td)
-				miasma.clear_fog_at_world(world_pos)
+	# Delegate clearing to Miasma using the new optimized path function
+	miasma.clear_path(start_world, end_world, half_w_px)
 
 
 func _draw():
