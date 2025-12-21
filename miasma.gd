@@ -5,7 +5,7 @@ extends TileMapLayer
 @export var fog_atlas: Vector2i = Vector2i(0, 0)
 @export var buffer_tiles := 24
 @export var forget_buffer_tiles := 24
-var cleared_cells := {}
+
 
 
 var last_center := Vector2i(999999, 999999)
@@ -49,31 +49,7 @@ func _physics_process(_delta):
 	last_center = center
 	_fill_fog_rect(center, radius_x, radius_y, forget_radius_x, forget_radius_y)
 
-func _process_regrow():
-	var keys: Array = frontier.keys()
-	if keys.is_empty():
-		return
-		
-	var current_time: float = Time.get_ticks_msec() / 1000.0
-	var regrown_count: int = 0
-	
-	keys.shuffle() # Prevent directional bias
 
-	for cell in keys:
-		if regrown_count >= max_regrow_per_frame:
-			break
-			
-		if not _is_boundary(cell):
-			frontier.erase(cell)
-			continue
-
-		var t_cleared: float = cleared.get(cell, 0.0)
-		if current_time - t_cleared < regrow_delay_s:
-			continue
-			
-		if randf() < regrow_chance:
-			_regrow_cell(cell)
-			regrown_count += 1
 
 func _regrow_cell(cell: Vector2i):
 	# Remove from tracking
@@ -115,14 +91,6 @@ func _fill_fog_rect(center: Vector2i, radius_x: int, radius_y: int, forget_radiu
 var frontier := {} # Changed from Array to Dictionary for O(1) performance
 var clear_stats := {"calls": 0, "drawn_holes": 0}
 
-func clear_fog_at_world(world_pos: Vector2) -> void:
-	var cell: Vector2i = local_to_map(to_local(world_pos))
-	
-	if not cleared.has(cell):
-		cleared[cell] = Time.get_ticks_msec() / 1000.0 # Ported JS timestamping
-		set_cell(cell, -1)
-		clear_stats.calls += 1
-		_update_frontier(cell)
 
 func _update_frontier(cell: Vector2i):
 	# JS Port logic: only track cells that are on the boundary of the fog
@@ -145,18 +113,7 @@ func _is_boundary(cell: Vector2i) -> bool:
 			return true
 	return false
 	
-# Stamp-based path clearing. Decouples geometry from the Beam nodes.
-func clear_path(start_world: Vector2, end_world: Vector2, radius_px: float):
-	var dist: float = start_world.distance_to(end_world)
-	var dir: Vector2 = start_world.direction_to(end_world)
-	
-	# Step by half a tile to ensure no gaps are missed
-	var step_size: float = (tile_set.tile_size.x * 0.5)
-	var steps: int = int(dist / step_size)
-	
-	for i in range(steps + 1):
-		var stamp_pos: Vector2 = start_world + (dir * i * step_size)
-		clear_fog_at_world(stamp_pos)
+
 		
 # Fixed elliptical clearing for isometric 2:1 matching
 func clear_circle(world_pos: Vector2, radius_px: float):
@@ -177,10 +134,60 @@ func clear_circle(world_pos: Vector2, radius_px: float):
 				var target_cell: Vector2i = center_cell + Vector2i(dx, dy)
 				clear_fog_at_cell(target_cell)
 
-# Helper function to consolidate clearing logic
+
+func _process_regrow():
+	var keys: Array = frontier.keys()
+	var key_count: int = keys.size()
+	if key_count == 0:
+		return
+
+	var current_time: float = Time.get_ticks_msec() / 1000.0
+	var regrown_count := 0
+
+	# Avoid shuffling the whole frontier every frame.
+	# Sample a bounded number of candidates; this keeps cost stable.
+	var max_attempts: int = min(key_count, max_regrow_per_frame * 4)
+
+	for _i in range(max_attempts):
+		if regrown_count >= max_regrow_per_frame:
+			break
+
+		var cell: Vector2i = keys[randi() % key_count]
+
+		if not _is_boundary(cell):
+			frontier.erase(cell)
+			continue
+
+		var t_cleared: float = float(cleared.get(cell, 0.0))
+		if current_time - t_cleared < regrow_delay_s:
+			continue
+
+		if randf() < regrow_chance:
+			_regrow_cell(cell)
+			regrown_count += 1
+
+
+func clear_fog_at_world(world_pos: Vector2) -> void:
+	var cell: Vector2i = local_to_map(to_local(world_pos))
+	clear_fog_at_cell(cell)
+
+
+func clear_path(start_world: Vector2, end_world: Vector2, radius_px: float):
+	var dist: float = start_world.distance_to(end_world)
+	var dir: Vector2 = start_world.direction_to(end_world)
+
+	# Step by half a tile to ensure no gaps are missed
+	var step_size: float = (tile_set.tile_size.x * 0.5)
+	var steps: int = int(dist / step_size)
+
+	for i in range(steps + 1):
+		var stamp_pos: Vector2 = start_world + (dir * i * step_size)
+		clear_circle(stamp_pos, radius_px)
+
+
 func clear_fog_at_cell(cell: Vector2i) -> void:
 	if not cleared.has(cell):
 		cleared[cell] = Time.get_ticks_msec() / 1000.0
 		set_cell(cell, -1)
-		clear_stats.calls += 1
+		clear_stats["calls"] += 1
 		_update_frontier(cell)
