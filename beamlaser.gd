@@ -10,11 +10,7 @@ extends Node2D
 
 @export var CORE_WIDTH_SCALE := 0.35
 
-const ISO_Y_SCALE := 0.5
 const MIASMA_TILE_X := 16.0
-
-func to_iso(v: Vector2) -> Vector2:
-	return Vector2(v.x - v.y, (v.x + v.y) * ISO_Y_SCALE)
 
 func _process(_delta):
 	var cone := _get_cone()
@@ -68,18 +64,18 @@ func _draw():
 	var p0 := origin_td
 	var p1 := origin_td + dir_td * length_px
 
-	var a := to_iso(p0 + perp_td * half_w_px)
-	var b := to_iso(p0 - perp_td * half_w_px)
-	var c := to_iso(p1 - perp_td * half_w_px)
-	var d := to_iso(p1 + perp_td * half_w_px)
+	var a := IsoMath.to_iso(p0 + perp_td * half_w_px)
+	var b := IsoMath.to_iso(p0 - perp_td * half_w_px)
+	var c := IsoMath.to_iso(p1 - perp_td * half_w_px)
+	var d := IsoMath.to_iso(p1 + perp_td * half_w_px)
 
 	draw_colored_polygon([a, b, c, d], Color(1, 0.8, 0.2, 0.35))
 
 	var core_half_w := half_w_px * CORE_WIDTH_SCALE
-	var a2 := to_iso(p0 + perp_td * core_half_w)
-	var b2 := to_iso(p0 - perp_td * core_half_w)
-	var c2 := to_iso(p1 - perp_td * core_half_w)
-	var d2 := to_iso(p1 + perp_td * core_half_w)
+	var a2 := IsoMath.to_iso(p0 + perp_td * core_half_w)
+	var b2 := IsoMath.to_iso(p0 - perp_td * core_half_w)
+	var c2 := IsoMath.to_iso(p1 - perp_td * core_half_w)
+	var d2 := IsoMath.to_iso(p1 + perp_td * core_half_w)
 
 	draw_colored_polygon([a2, b2, c2, d2], Color(1.0, 0.8, 0.2, 1.0))
 

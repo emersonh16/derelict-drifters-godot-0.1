@@ -2,7 +2,6 @@ extends Node2D
 
 @export var bubble_tiles := 6
 @export var MAX_BUBBLE_TILES := 8
-const ISO_Y_SCALE := 0.5
 
 const MIASMA_TILE_X := 16.0
 const MIASMA_TILE_Y := 8.0

@@ -8,11 +8,7 @@ extends Node2D
 
 var aim_angle := 0.0
 
-const ISO_Y_SCALE := 0.5
 const MIASMA_TILE_X := 16.0
-
-func to_iso(v: Vector2) -> Vector2:
-	return Vector2(v.x - v.y, (v.x + v.y) * ISO_Y_SCALE)
 
 func _draw():
 	if not visible or focus >= 0.95:
@@ -35,22 +31,22 @@ func _draw():
 
 	# Draw Body
 	var body := PackedVector2Array()
-	body.append(to_iso(Vector2.ZERO))
-	body.append(to_iso(left_td))
-	body.append(to_iso(right_td))
+	body.append(IsoMath.to_iso(Vector2.ZERO))
+	body.append(IsoMath.to_iso(left_td))
+	body.append(IsoMath.to_iso(right_td))
 	draw_colored_polygon(body, Color(1, 0.8, 0.2, 0.35))
 
 	# Draw Cap - This midpoint must be mirrored in clearing
 	var cap_center_td := (left_td + right_td) * 0.5
 	var cap_radius := (right_td - left_td).length() * 0.5
 	var cap_pts := PackedVector2Array()
-	cap_pts.append(to_iso(cap_center_td))
+	cap_pts.append(IsoMath.to_iso(cap_center_td))
 
 	var steps := 16
 	for i in range(steps + 1):
 		var a: float = lerp(aim_angle - PI * 0.5, aim_angle + PI * 0.5, float(i) / float(steps))
 		var p_td := cap_center_td + Vector2(cos(a), sin(a)) * cap_radius
-		cap_pts.append(to_iso(p_td))
+		cap_pts.append(IsoMath.to_iso(p_td))
 	draw_colored_polygon(cap_pts, Color(1, 0.8, 0.2, 0.35))
 
 func _process(_delta):

@@ -34,26 +34,10 @@ func _physics_process(_delta):
 	velocity = dir.normalized() * SPEED
 	move_and_slide()
 
-
-const ISO_Y_SCALE := 0.5
-
-func _iso_delta_to_topdown(iso_delta: Vector2) -> Vector2:
-	# Inverse of:
-	# iso.x = td.x - td.y
-	# iso.y = (td.x + td.y) * ISO_Y_SCALE
-	var k := ISO_Y_SCALE
-	var u := iso_delta.x
-	var v := iso_delta.y
-	var sum := v / k
-	return Vector2(
-		(u + sum) * 0.5,
-		(sum - u) * 0.5
-	)
-
 func _process(_delta):
 	var mouse_pos := get_global_mouse_position()
 	var iso_delta := mouse_pos - global_position
-	var td_delta := _iso_delta_to_topdown(iso_delta)
+	var td_delta := IsoMath.from_iso(iso_delta)
 	var aim := td_delta.angle()
 
 	beam.global_position = global_position
