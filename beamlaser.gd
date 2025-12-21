@@ -26,33 +26,15 @@ func _process(_delta):
 	
 	if visible:
 		queue_redraw()
-		_clear_miasma_laser()
-
-func _clear_miasma_laser():
-	var miasma = get_tree().get_first_node_in_group("miasma")
-	var cone := _get_cone()
-	if not miasma or not cone:
-		return
-
-	var focus: float = clamp(cone.focus, 0.0, 1.0)
-	var length_px: float = lerp(
-		LASER_MIN_LENGTH_TILES * MIASMA_TILE_X,
-		LASER_MAX_LENGTH_TILES * MIASMA_TILE_X,
-		focus
-	)
-	var half_w_px: float = lerp(
-		LASER_MIN_HALF_WIDTH_TILES * MIASMA_TILE_X,
-		LASER_MAX_HALF_WIDTH_TILES * MIASMA_TILE_X,
-		focus
-	)
-
-	# Calculate isometric end point for the stamping logic
-	var dir_td := Vector2.RIGHT.rotated(cone.aim_angle)
-	var start_world := global_position
-	var end_world := global_position + to_iso(dir_td * length_px)
-
-	# Delegate clearing to Miasma using the new optimized path function
-	miasma.clear_path(start_world, end_world, half_w_px)
+		
+		# Submit clearing request (intent-only, no mutation)
+		var miasma = get_tree().get_first_node_in_group("miasma")
+		if miasma and cone:
+			miasma.submit_request("laser", {
+				"origin_world": global_position,
+				"aim_angle": cone.aim_angle,
+				"focus": clamp(cone.focus, 0.0, 1.0)
+			})
 
 
 func _draw():

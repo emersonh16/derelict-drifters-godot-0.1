@@ -70,38 +70,13 @@ func _draw_debug_tiles():
 
 
 
-func _clear_miasma():
-	if not miasma:
-		return
-
-	var center_world := global_position
-	var center_cell: Vector2i = miasma.local_to_map(miasma.to_local(center_world))
-
-	var r_tiles_x := bubble_tiles
-	var r_tiles_y := int(ceil(bubble_tiles * (MIASMA_TILE_X / MIASMA_TILE_Y)))
-
-	var rx := bubble_tiles * MIASMA_TILE_X
-	var ry := bubble_tiles * MIASMA_TILE_Y
-
-	for dy in range(-r_tiles_y, r_tiles_y + 1):
-		for dx in range(-r_tiles_x, r_tiles_x + 1):
-			var cell := center_cell + Vector2i(dx, dy)
-			var world_pos: Vector2 = miasma.to_global(
-				miasma.map_to_local(cell)
-			)
-
-			var local := to_local(world_pos)
-
-			if (
-				(local.x * local.x) / (rx * rx) +
-				(local.y * local.y) / (ry * ry)
-			) > 1.0:
-				continue
-
-			miasma.clear_fog_at_world(world_pos)
-			
-
 func _process(_delta):
-	if not visible:
+	if not visible or not miasma:
 		return
-	_clear_miasma()
+	
+	# Submit clearing request (intent-only, no mutation)
+	miasma.submit_request("bubble", {
+		"center_world": global_position,
+		"bubble_tiles": float(bubble_tiles),
+		"node_rotation": global_rotation
+	})

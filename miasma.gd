@@ -5,7 +5,7 @@ extends TileMapLayer
 @export var fog_atlas: Vector2i = Vector2i(0, 0)
 @export var buffer_tiles := 24
 @export var forget_buffer_tiles := 24
-
+var cleared_cells := {}
 
 
 var last_center := Vector2i(999999, 999999)
@@ -14,6 +14,10 @@ var last_center := Vector2i(999999, 999999)
 @export var regrow_chance := 0.6 # 60% chance per check 
 @export var regrow_delay_s := 1.0 # Wait 1 second before regrowing 
 @export var max_regrow_per_frame := 10 # Budget to prevent lag 
+
+# Clearing request queue and budget
+var clear_queue: Array = []
+@export var max_clears_per_frame := 50 # Budget to ensure 60 FPS
 
 # Cells we have "carved out" (world-anchored)
 # Dictionary: Vector2i -> float (timestamp) 
@@ -24,21 +28,24 @@ func _ready():
 
 
 func _physics_process(_delta):
-	var cam: Camera2D = get_viewport().get_camera_2d()
+	var cam := get_viewport().get_camera_2d()
 	if not cam:
 		return
 
-	var center: Vector2i = local_to_map(to_local(cam.global_position))
+	var center := local_to_map(to_local(cam.global_position))
 
-	var viewport_size: Vector2 = cam.get_viewport_rect().size
-	var tile_size: Vector2i = tile_set.tile_size
+	var viewport_size := cam.get_viewport_rect().size
+	var tile_size := tile_set.tile_size
 
-	var radius_x: int = int(ceil(viewport_size.x / tile_size.x)) + buffer_tiles
-	var radius_y: int = int(ceil(viewport_size.y / tile_size.y)) + buffer_tiles
+	var radius_x := int(ceil(viewport_size.x / tile_size.x)) + buffer_tiles
+	var radius_y := int(ceil(viewport_size.y / tile_size.y)) + buffer_tiles
 
-	var forget_radius_x: int = radius_x + forget_buffer_tiles
-	var forget_radius_y: int = radius_y + forget_buffer_tiles
+	var forget_radius_x := radius_x + forget_buffer_tiles
+	var forget_radius_y := radius_y + forget_buffer_tiles
 
+	
+	# Process clearing requests (budgeted)
+	_process_clear_queue()
 	
 	# JS Port: Process regrow every frame to simulate real-time fog rolling in
 	_process_regrow()
@@ -49,7 +56,31 @@ func _physics_process(_delta):
 	last_center = center
 	_fill_fog_rect(center, radius_x, radius_y, forget_radius_x, forget_radius_y)
 
+func _process_regrow():
+	var keys = frontier.keys()
+	if keys.is_empty():
+		return
+		
+	var current_time := Time.get_ticks_msec() / 1000.0
+	var regrown_count := 0
+	
+	keys.shuffle() # Prevent directional bias
 
+	for cell in keys:
+		if regrown_count >= max_regrow_per_frame:
+			break
+			
+		if not _is_boundary(cell):
+			frontier.erase(cell)
+			continue
+
+		var t_cleared = cleared.get(cell, 0.0)
+		if current_time - t_cleared < regrow_delay_s:
+			continue
+			
+		if randf() < regrow_chance:
+			_regrow_cell(cell)
+			regrown_count += 1
 
 func _regrow_cell(cell: Vector2i):
 	# Remove from tracking
@@ -63,7 +94,7 @@ func _regrow_cell(cell: Vector2i):
 	_update_neighbors(cell)
 
 func _update_neighbors(cell: Vector2i):
-	var neighbors: Array = [
+	var neighbors = [
 		Vector2i(cell.x - 1, cell.y),
 		Vector2i(cell.x + 1, cell.y),
 		Vector2i(cell.x, cell.y - 1),
@@ -77,7 +108,7 @@ func _update_neighbors(cell: Vector2i):
 func _fill_fog_rect(center: Vector2i, radius_x: int, radius_y: int, forget_radius_x: int, forget_radius_y: int) -> void:
 	for y in range(center.y - radius_y, center.y + radius_y + 1):
 		for x in range(center.x - radius_x, center.x + radius_x + 1):
-			var cell: Vector2i = Vector2i(x, y)
+			var cell := Vector2i(x, y)
 			if cleared.has(cell):
 				continue
 			set_cell(cell, fog_source_id, fog_atlas)
@@ -91,6 +122,10 @@ func _fill_fog_rect(center: Vector2i, radius_x: int, radius_y: int, forget_radiu
 var frontier := {} # Changed from Array to Dictionary for O(1) performance
 var clear_stats := {"calls": 0, "drawn_holes": 0}
 
+# DEPRECATED: Use submit_request() instead
+func clear_fog_at_world(world_pos: Vector2) -> void:
+	var cell := local_to_map(to_local(world_pos))
+	clear_fog_at_cell(cell)
 
 func _update_frontier(cell: Vector2i):
 	# JS Port logic: only track cells that are on the boundary of the fog
@@ -102,7 +137,7 @@ func _update_frontier(cell: Vector2i):
 
 func _is_boundary(cell: Vector2i) -> bool:
 	# Ported from JS isBoundary(): check 4-way neighbors
-	var neighbors: Array = [
+	var neighbors = [
 		Vector2i(cell.x - 1, cell.y),
 		Vector2i(cell.x + 1, cell.y),
 		Vector2i(cell.x, cell.y - 1),
@@ -113,16 +148,172 @@ func _is_boundary(cell: Vector2i) -> bool:
 			return true
 	return false
 	
+# DEPRECATED: Use submit_request() instead
+func clear_path(start_world: Vector2, end_world: Vector2, radius_px: float):
+	submit_request("laser", {
+		"origin_world": start_world,
+		"aim_angle": start_world.direction_to(end_world).angle(),
+		"focus": 1.0
+	})
 
-		
-# Fixed elliptical clearing for isometric 2:1 matching
+# DEPRECATED: Use submit_request() instead  
 func clear_circle(world_pos: Vector2, radius_px: float):
+	# Legacy function - prefer submit_request for new code
+	_process_circle_stamp(world_pos, radius_px)
+
+# Helper function to consolidate clearing logic
+func clear_fog_at_cell(cell: Vector2i) -> void:
+	if not cleared.has(cell):
+		cleared[cell] = Time.get_ticks_msec() / 1000.0
+		set_cell(cell, -1)
+		clear_stats.calls += 1
+		_update_frontier(cell)
+
+# ============================================================================
+# REQUEST-BASED CLEARING API
+# ============================================================================
+
+# Submit a clearing request (beams call this, never mutate directly)
+func submit_request(shape_type: String, data: Dictionary) -> void:
+	clear_queue.append({"type": shape_type, "data": data})
+
+# Process queued clearing requests with per-frame budget
+func _process_clear_queue() -> void:
+	var processed: int = 0
+	while processed < max_clears_per_frame and not clear_queue.is_empty():
+		var request: Dictionary = clear_queue.pop_front()
+		var shape_type: String = request.get("type", "")
+		var data: Dictionary = request.get("data", {})
+		
+		match shape_type:
+			"bubble":
+				_process_bubble_request(data)
+			"cone":
+				_process_cone_request(data)
+			"laser":
+				_process_laser_request(data)
+		
+		processed += 1
+
+# ============================================================================
+# CONSOLIDATED CLEARING LOGIC (All gameplay reasoning in Top-Down Space)
+# ============================================================================
+
+# Bubble: Elliptical check in local space
+func _process_bubble_request(data: Dictionary) -> void:
+	var center_world: Vector2 = data.get("center_world", Vector2.ZERO)
+	var bubble_tiles: float = data.get("bubble_tiles", 6.0)
+	var node_rotation: float = data.get("node_rotation", 0.0)
+	
+	const MIASMA_TILE_X: float = 16.0
+	const MIASMA_TILE_Y: float = 8.0
+	
+	var center_cell: Vector2i = local_to_map(to_local(center_world))
+	var r_tiles_x: int = int(bubble_tiles)
+	var r_tiles_y: int = int(ceil(bubble_tiles * (MIASMA_TILE_X / MIASMA_TILE_Y)))
+	var rx: float = bubble_tiles * MIASMA_TILE_X
+	var ry: float = bubble_tiles * MIASMA_TILE_Y
+	
+	for dy in range(-r_tiles_y, r_tiles_y + 1):
+		for dx in range(-r_tiles_x, r_tiles_x + 1):
+			var cell: Vector2i = center_cell + Vector2i(dx, dy)
+			var cell_world: Vector2 = to_global(map_to_local(cell))
+			
+			# Convert to node's local space (accounting for rotation)
+			var cell_local: Vector2 = (cell_world - center_world).rotated(-node_rotation)
+			
+			# Elliptical distance check in local space
+			if ((cell_local.x * cell_local.x) / (rx * rx) + (cell_local.y * cell_local.y) / (ry * ry)) <= 1.0:
+				clear_fog_at_cell(cell)
+
+# Cone: Triangle sweep + semicircle cap
+func _process_cone_request(data: Dictionary) -> void:
+	var origin_world: Vector2 = data.get("origin_world", Vector2.ZERO)
+	var aim_angle: float = data.get("aim_angle", 0.0)
+	var focus: float = data.get("focus", 0.0)
+	var node_rotation: float = data.get("node_rotation", 0.0)
+	
+	const CONE_MIN_LENGTH_TILES: float = 6.0
+	const CONE_MAX_LENGTH_TILES: float = 18.0
+	const CONE_MIN_ANGLE: float = deg_to_rad(10.0)
+	const CONE_MAX_ANGLE: float = deg_to_rad(60.0)
+	const MIASMA_TILE_X: float = 16.0
+	const ISO_Y_SCALE: float = 0.5
+	
+	# Calculate cone geometry in top-down space
+	var t: float = clamp(focus, 0.0, 1.0)
+	var length_px: float = lerp(CONE_MIN_LENGTH_TILES, CONE_MAX_LENGTH_TILES, t) * MIASMA_TILE_X
+	var half_angle: float = lerp(CONE_MAX_ANGLE, CONE_MIN_ANGLE, t)
+	
+	var forward: Vector2 = Vector2.RIGHT.rotated(aim_angle)
+	var left_td: Vector2 = forward.rotated(half_angle) * length_px
+	var right_td: Vector2 = forward.rotated(-half_angle) * length_px
+	
+	if left_td.cross(right_td) < 0.0:
+		var tmp: Vector2 = left_td
+		left_td = right_td
+		right_td = tmp
+	
+	var cap_center_td: Vector2 = (left_td + right_td) * 0.5
+	var body_length: float = length_px * cos(half_angle)
+	
+	# 1. BODY CLEARING: Linear sweep along center line
+	var steps: int = 12
+	for i in range(steps + 1):
+		var step_t: float = float(i) / float(steps)
+		var dist: float = step_t * body_length
+		var current_radius: float = (dist * tan(half_angle)) + (MIASMA_TILE_X * 0.4)
+		
+		# Convert top-down position to world space via isometric projection
+		var sweep_pos_td: Vector2 = forward * dist
+		var sweep_world: Vector2 = origin_world + _to_iso(sweep_pos_td)
+		_process_circle_stamp(sweep_world, current_radius)
+	
+	# 2. CAP CLEARING: Semicircle at exact visual midpoint
+	var cap_radius_td: float = (right_td - left_td).length() * 0.5
+	var cap_world_pos: Vector2 = origin_world + _to_iso(cap_center_td)
+	_process_circle_stamp(cap_world_pos, cap_radius_td + (MIASMA_TILE_X * 0.5))
+
+# Laser: Path clearing
+func _process_laser_request(data: Dictionary) -> void:
+	var origin_world: Vector2 = data.get("origin_world", Vector2.ZERO)
+	var aim_angle: float = data.get("aim_angle", 0.0)
+	var focus: float = data.get("focus", 0.0)
+	
+	const LASER_MIN_LENGTH_TILES: float = 10.0
+	const LASER_MAX_LENGTH_TILES: float = 22.0
+	const LASER_MIN_HALF_WIDTH_TILES: float = 0.35
+	const LASER_MAX_HALF_WIDTH_TILES: float = 0.90
+	const MIASMA_TILE_X: float = 16.0
+	const ISO_Y_SCALE: float = 0.5
+	
+	var t: float = clamp(focus, 0.0, 1.0)
+	var length_px: float = lerp(LASER_MIN_LENGTH_TILES, LASER_MAX_LENGTH_TILES, t) * MIASMA_TILE_X
+	var half_w_px: float = lerp(LASER_MIN_HALF_WIDTH_TILES, LASER_MAX_HALF_WIDTH_TILES, t) * MIASMA_TILE_X
+	
+	# Calculate path in top-down space
+	var dir_td: Vector2 = Vector2.RIGHT.rotated(aim_angle)
+	var start_world: Vector2 = origin_world
+	var end_world: Vector2 = origin_world + _to_iso(dir_td * length_px)
+	
+	# Step along path
+	var step_size: float = tile_set.tile_size.x * 0.5
+	var dist: float = start_world.distance_to(end_world)
+	var steps: int = int(dist / step_size)
+	
+	for i in range(steps + 1):
+		var step_t: float = float(i) / float(steps) if steps > 0 else 0.0
+		var stamp_pos: Vector2 = start_world.lerp(end_world, step_t)
+		_process_circle_stamp(stamp_pos, half_w_px)
+
+# Helper: Process a circular stamp (elliptical for isometric)
+func _process_circle_stamp(world_pos: Vector2, radius_px: float) -> void:
 	var local_pos: Vector2 = to_local(world_pos)
 	var center_cell: Vector2i = local_to_map(local_pos)
 	
 	# Scale tile radius to match the 16:8 (2:1) isometric grid ratio
 	var tile_r_x: int = int(ceil(radius_px / 16.0))
-	var tile_r_y: int = int(ceil(float(tile_r_x) * 0.5))
+	var tile_r_y: int = int(ceil((radius_px * 0.5) / 8.0))
 	
 	for dy in range(-tile_r_y, tile_r_y + 1):
 		for dx in range(-tile_r_x, tile_r_x + 1):
@@ -134,60 +325,7 @@ func clear_circle(world_pos: Vector2, radius_px: float):
 				var target_cell: Vector2i = center_cell + Vector2i(dx, dy)
 				clear_fog_at_cell(target_cell)
 
-
-func _process_regrow():
-	var keys: Array = frontier.keys()
-	var key_count: int = keys.size()
-	if key_count == 0:
-		return
-
-	var current_time: float = Time.get_ticks_msec() / 1000.0
-	var regrown_count := 0
-
-	# Avoid shuffling the whole frontier every frame.
-	# Sample a bounded number of candidates; this keeps cost stable.
-	var max_attempts: int = min(key_count, max_regrow_per_frame * 4)
-
-	for _i in range(max_attempts):
-		if regrown_count >= max_regrow_per_frame:
-			break
-
-		var cell: Vector2i = keys[randi() % key_count]
-
-		if not _is_boundary(cell):
-			frontier.erase(cell)
-			continue
-
-		var t_cleared: float = float(cleared.get(cell, 0.0))
-		if current_time - t_cleared < regrow_delay_s:
-			continue
-
-		if randf() < regrow_chance:
-			_regrow_cell(cell)
-			regrown_count += 1
-
-
-func clear_fog_at_world(world_pos: Vector2) -> void:
-	var cell: Vector2i = local_to_map(to_local(world_pos))
-	clear_fog_at_cell(cell)
-
-
-func clear_path(start_world: Vector2, end_world: Vector2, radius_px: float):
-	var dist: float = start_world.distance_to(end_world)
-	var dir: Vector2 = start_world.direction_to(end_world)
-
-	# Step by half a tile to ensure no gaps are missed
-	var step_size: float = (tile_set.tile_size.x * 0.5)
-	var steps: int = int(dist / step_size)
-
-	for i in range(steps + 1):
-		var stamp_pos: Vector2 = start_world + (dir * i * step_size)
-		clear_circle(stamp_pos, radius_px)
-
-
-func clear_fog_at_cell(cell: Vector2i) -> void:
-	if not cleared.has(cell):
-		cleared[cell] = Time.get_ticks_msec() / 1000.0
-		set_cell(cell, -1)
-		clear_stats["calls"] += 1
-		_update_frontier(cell)
+# Helper: Isometric projection (same as beam nodes)
+func _to_iso(v: Vector2) -> Vector2:
+	const ISO_Y_SCALE: float = 0.5
+	return Vector2(v.x - v.y, (v.x + v.y) * ISO_Y_SCALE)
