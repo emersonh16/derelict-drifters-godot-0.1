@@ -8,15 +8,8 @@ const MIASMA_TILE_Y := 8.0
 
 @onready var miasma = get_tree().get_first_node_in_group("miasma")
 
-
-func _ready():
-	queue_redraw()
-
-
-
-
 func _draw():
-	# CRITICAL: cancel node rotation so shape is ground-locked
+	# LAW #7: Cancel node rotation so shape is ground-locked (visual only)
 	draw_set_transform(
 		Vector2.ZERO,
 		-global_rotation,
@@ -26,7 +19,7 @@ func _draw():
 	var rx := bubble_tiles * MIASMA_TILE_X
 	var ry := bubble_tiles * MIASMA_TILE_Y
 
-	var steps := 48
+	var steps := 32 # Reduced from 48 for minor optimization
 	var pts := PackedVector2Array()
 
 	for i in range(steps):
@@ -34,46 +27,12 @@ func _draw():
 		pts.append(Vector2(cos(a) * rx, sin(a) * ry))
 
 	draw_colored_polygon(pts, Color(1, 1, 0, 0.25))
-	_draw_debug_tiles()
-	
-	
-func _draw_debug_tiles():
-	if not miasma:
-		return
-
-	var center_world := global_position
-	var center_cell: Vector2i = miasma.local_to_map(miasma.to_local(center_world))
-
-
-	var r_tiles_x := bubble_tiles
-	var r_tiles_y := int(ceil(bubble_tiles * (MIASMA_TILE_X / MIASMA_TILE_Y)))
-	var rx := bubble_tiles * MIASMA_TILE_X
-	var ry := bubble_tiles * MIASMA_TILE_Y
-
-	for dy in range(-r_tiles_y, r_tiles_y + 1):
-		for dx in range(-r_tiles_x, r_tiles_x + 1):
-
-			# exact match: test in bubble local space
-			var cell := center_cell + Vector2i(dx, dy)
-			var world_pos: Vector2 = miasma.to_global(
-				miasma.map_to_local(cell)
-			)
-
-			var local := to_local(world_pos)
-
-			if (
-				(local.x * local.x) / (rx * rx) +
-				(local.y * local.y) / (ry * ry)
-			) > 1.0:
-				continue
-
-
 
 func _process(_delta):
 	if not visible or not miasma:
 		return
 	
-	# Submit clearing request (intent-only, no mutation)
+	# LAW #5: Submit clearing request (Intent → Truth → Projection flow)
 	miasma.submit_request("bubble", {
 		"center_world": global_position,
 		"bubble_tiles": float(bubble_tiles),

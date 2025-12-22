@@ -7,7 +7,7 @@
 [ext_resource type="Script" uid="uid://13vey8er5k6g" path="res://player-movement.gd" id="4_aqk2v"]
 [ext_resource type="Script" uid="uid://br61t7yoa2b58" path="res://beambubble.gd" id="6_dwbse"]
 [ext_resource type="Script" uid="uid://chka3v1y4wp30" path="res://beamcone.gd" id="7_pkg7o"]
-[ext_resource type="Script" uid="uid://ppfyey4bla3" path="res://beamlaser.gd" id="8_gbfbk"]
+[ext_resource type="Script" path="res://beamlaser.gd" id="8_gbfbk"]
 
 [sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_dwbse"]
 texture = ExtResource("2_036b0")
@@ -22,7 +22,6 @@ sources/0 = SubResource("TileSetAtlasSource_dwbse")
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_pkg7o"]
 
 [node name="World" type="Node2D"]
-y_sort_enabled = true
 position = Vector2(0, -8)
 metadata/_edit_vertical_guides_ = [-1758.0]
 
@@ -32,13 +31,11 @@ tile_set = ExtResource("1_tlwt5")
 
 [node name="Miasma" type="TileMapLayer" parent="."]
 z_index = 1
-y_sort_enabled = true
 tile_set = SubResource("TileSet_pkg7o")
 script = ExtResource("2_pkg7o")
 
 [node name="Player" type="CharacterBody2D" parent="."]
 top_level = true
-y_sort_enabled = true
 script = ExtResource("4_aqk2v")
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Player"]
