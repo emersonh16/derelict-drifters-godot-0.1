@@ -19,6 +19,9 @@ var last_center := Vector2i(999999, 999999)
 var clear_queue: Array = []
 @export var max_clears_per_frame := 50 # Budget to ensure 60 FPS
 
+@export var wind_velocity := Vector2(0.5, 0.0) # Drift speed in pixels/sec
+var miasma_offset := Vector2.ZERO # Cumulative drift offset in pixels
+
 # Cells we have "carved out" (world-anchored)
 # Dictionary: Vector2i -> float (timestamp) 
 var cleared := {}
