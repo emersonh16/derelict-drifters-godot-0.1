@@ -53,7 +53,8 @@ func _physics_process(_delta):
 		return
 
 	last_center = center
-	_fill_fog_rect(center, radius_x, radius_y, forget_radius_x, forget_radius_y)
+	var cam_world_pos := cam.global_position
+	_fill_fog_rect(center, radius_x, radius_y, forget_radius_x, forget_radius_y, cam_world_pos)
 
 func _process_regrow():
 	if frontier.is_empty():
@@ -108,7 +109,7 @@ func _update_neighbors(cell: Vector2i):
 			_update_frontier(n)
 
 
-func _fill_fog_rect(center: Vector2i, radius_x: int, radius_y: int, forget_radius_x: int, forget_radius_y: int) -> void:
+func _fill_fog_rect(center: Vector2i, radius_x: int, radius_y: int, forget_radius_x: int, forget_radius_y: int, camera_world_pos: Vector2) -> void:
 	for y in range(center.y - radius_y, center.y + radius_y + 1):
 		for x in range(center.x - radius_x, center.x + radius_x + 1):
 			var cell := Vector2i(x, y)
@@ -116,9 +117,16 @@ func _fill_fog_rect(center: Vector2i, radius_x: int, radius_y: int, forget_radiu
 				continue
 			set_cell(cell, fog_source_id, fog_atlas)
 
+	# Purge old cleared entries (local coordinates)
 	for cell in cleared.keys():
 		if abs(cell.x - center.x) > forget_radius_x or abs(cell.y - center.y) > forget_radius_y:
 			cleared.erase(cell)
+	
+	# Purge old cleared_cells entries (world coordinates)
+	var camera_world_tile := _world_pos_to_tile_coord(camera_world_pos)
+	for world_tile in cleared_cells.keys():
+		if abs(world_tile.x - camera_world_tile.x) > forget_radius_x or abs(world_tile.y - camera_world_tile.y) > forget_radius_y:
+			cleared_cells.erase(world_tile)
 
 
 # Performance and tracking variables from the JS build
