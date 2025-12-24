@@ -67,7 +67,7 @@ func _clear_miasma_laser():
 			
 			if p_td.distance_to(closest) <= half_w_px:
 				var world_pos := global_position + to_iso(p_td)
-				miasma.clear_fog_at_world(world_pos)
+				miasma.submit_request(miasma.RequestType.LASER, world_pos)
 
 
 func _draw():

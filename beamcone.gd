@@ -152,7 +152,7 @@ func _clear_miasma_cone():
 
 			var p_iso := to_iso(p_td)
 			var world_pos := global_position + p_iso
-			miasma.clear_fog_at_world(world_pos)
+			miasma.submit_request(miasma.RequestType.CONE, world_pos)
 		
 	
 	

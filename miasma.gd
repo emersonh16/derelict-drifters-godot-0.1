@@ -1,5 +1,11 @@
 extends TileMapLayer
 
+enum RequestType {
+	BUBBLE,
+	CONE,
+	LASER
+}
+
 # Which tile to paint for fog (TileSet source + atlas coords)
 @export var fog_source_id: int = 0
 @export var fog_atlas: Vector2i = Vector2i(0, 0)
@@ -119,7 +125,11 @@ func _fill_fog_rect(center: Vector2i, radius_x: int, radius_y: int, forget_radiu
 var frontier := [] # Ported from JS 'frontier' Set
 var clear_stats := {"calls": 0, "drawn_holes": 0}
 
-func clear_fog_at_world(world_pos: Vector2) -> void:
+# Request interface: Beams submit clearing requests via this function
+func submit_request(shape_type: RequestType, world_pos: Vector2) -> void:
+	_clear_fog_at_world(world_pos)
+
+func _clear_fog_at_world(world_pos: Vector2) -> void:
 	var cell := local_to_map(to_local(world_pos))
 	
 	if not cleared.has(cell):

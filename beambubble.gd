@@ -98,7 +98,7 @@ func _clear_miasma():
 			) > 1.0:
 				continue
 
-			miasma.clear_fog_at_world(world_pos)
+			miasma.submit_request(miasma.RequestType.BUBBLE, world_pos)
 			
 
 func _process(_delta):
