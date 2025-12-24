@@ -115,6 +115,11 @@ func _fill_fog_rect(center: Vector2i, radius_x: int, radius_y: int, forget_radiu
 			var cell := Vector2i(x, y)
 			if cleared.has(cell):
 				continue
+			# Check cleared_cells (world-space truth) - skip drawing fog if cleared
+			var cell_world_pos := to_global(map_to_local(cell))
+			var world_tile_coord := _world_pos_to_tile_coord(cell_world_pos)
+			if cleared_cells.has(world_tile_coord):
+				continue
 			set_cell(cell, fog_source_id, fog_atlas)
 
 	# Purge old cleared entries (local coordinates)
