@@ -129,11 +129,21 @@ var clear_stats := {"calls": 0, "drawn_holes": 0}
 func submit_request(shape_type: RequestType, world_pos: Vector2) -> void:
 	_clear_fog_at_world(world_pos)
 
+# Convert world position to world-space tile coordinate
+func _world_pos_to_tile_coord(world_pos: Vector2) -> Vector2i:
+	var tile_size := tile_set.tile_size
+	return Vector2i(
+		int(floor(world_pos.x / float(tile_size.x))),
+		int(floor(world_pos.y / float(tile_size.y)))
+	)
+
 func _clear_fog_at_world(world_pos: Vector2) -> void:
 	var cell := local_to_map(to_local(world_pos))
+	var world_tile_coord := _world_pos_to_tile_coord(world_pos)
 	
 	if not cleared.has(cell):
 		cleared[cell] = Time.get_ticks_msec() / 1000.0 # Ported JS timestamping
+		cleared_cells[world_tile_coord] = true # Store world-space truth
 		set_cell(cell, -1)
 		clear_stats.calls += 1
 		_update_frontier(cell)
