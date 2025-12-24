@@ -1,407 +1,451 @@
 extends TileMapLayer
 
-# Which tile to paint for fog (TileSet source + atlas coords)
-@export var fog_source_id: int = 0
+# --- Config Knobs (Per Design Doc & Audit) ---
+const LOGIC_TILE_SIZE = Vector2i(8, 4)
+@export var buffer_tiles := 32        # Viewport padding (PAD) 
+@export var forget_padding := 64      # Radius beyond which we purge memory 
+@export var fog_source_id: int = 1
 @export var fog_atlas: Vector2i = Vector2i(0, 0)
-@export var buffer_tiles := 24
-@export var forget_buffer_tiles := 24
-var cleared_cells := {}
 
+# Performance Budgets (DDGDD: Fixed per-frame caps)
+const MAX_SETCELL_PER_FRAME := 400
+const MAX_CLEAR_TILES_PER_FRAME := 500
+const MAX_FRONTIER_CHECKS_PER_FRAME := 50
 
+# State Tracking
+var cleared_map := {} # Absolute Tile Coord -> Time Cleared 
+var frontier := {}    # Boundary cells for regrow 
 var last_center := Vector2i(999999, 999999)
-
-# JS Port: Regrow configuration
-@export var regrow_chance := 0.6 # 60% chance per check 
-@export var regrow_delay_s := 1.0 # Wait 1 second before regrowing 
-@export var max_regrow_per_frame := 10 # Budget to prevent lag 
-
-# Clearing request queue and budget
 var clear_queue: Array = []
-@export var max_clears_per_frame := 50 # Budget to ensure 60 FPS
 
-@export var wind_velocity := Vector2(0.5, 0.0) # Drift speed in pixels/sec
-var miasma_offset := Vector2.ZERO # Cumulative drift offset in pixels
-
-# Cells we have "carved out" (world-anchored)
-# Dictionary: Vector2i -> float (timestamp) 
-var cleared := {}
+# Amortization State
+var frontier_iterator_index := 0
+var frontier_keys_array := []  # Cached array for amortized iteration
+var pending_edge_patch_work := []  # Carry-over work for edge patching
 
 func _ready():
-	add_to_group("miasma")
+	add_to_group("miasma") 
+	# Ensure absolute world-locking (Priority 1)
+	top_level = true 
+	global_position = Vector2.ZERO 
 
-
-func _physics_process(_delta):
+func _physics_process(_delta: float):
 	var cam := get_viewport().get_camera_2d()
-	if not cam:
-		return
+	if not cam: return
 
-	var center := local_to_map(to_local(cam.global_position))
+	# Get current Logical Center in absolute map coords
+	# Use floor() to prevent sub-pixel jitter from triggering updates
+	var cam_world_pos = cam.global_position
+	var cam_local_pos = to_local(cam_world_pos)
+	var center_tile: Vector2i = local_to_map(Vector2(floor(cam_local_pos.x), floor(cam_local_pos.y)))
 
-	var viewport_size := cam.get_viewport_rect().size
-	var tile_size := tile_set.tile_size
+	# Edge-Patching: Only update visual tiles when boundary is crossed (Priority 2)
+	if center_tile != last_center:
+		_edge_patch_window_incremental(last_center, center_tile)
+		_forget_distant_tiles(center_tile)
+		last_center = center_tile
+	else:
+		# Process any pending edge-patch work from previous frame
+		_process_pending_edge_patch()
 
-	var radius_x := int(ceil(viewport_size.x / tile_size.x)) + buffer_tiles
-	var radius_y := int(ceil(viewport_size.y / tile_size.y)) + buffer_tiles
-
-	var forget_radius_x := radius_x + forget_buffer_tiles
-	var forget_radius_y := radius_y + forget_buffer_tiles
-
-	
-	# Process clearing requests (budgeted)
 	_process_clear_queue()
-	
-	# JS Port: Process regrow every frame to simulate real-time fog rolling in
 	_process_regrow()
 
-	if center == last_center:
-		return
+# --- Priority 2: Incremental Edge-Patching Algorithm (60 FPS) ---
+func _edge_patch_window_incremental(old_c: Vector2i, new_c: Vector2i):
+	var vp = get_viewport_rect().size
+	# Account for Isometric height (squashed 2:1 ratio)
+	var half_w = int(ceil(vp.x / LOGIC_TILE_SIZE.x)) + buffer_tiles
+	var half_h = int(ceil(vp.y / (LOGIC_TILE_SIZE.y * 0.5))) + buffer_tiles 
 
-	last_center = center
-	_fill_fog_rect(center, radius_x, radius_y, forget_radius_x, forget_radius_y)
+	var old_rect = Rect2i(old_c.x - half_w, old_c.y - half_h, half_w * 2, half_h * 2)
+	var new_rect = Rect2i(new_c.x - half_w, new_c.y - half_h, half_w * 2, half_h * 2)
 
-func _process_regrow():
-	var keys = frontier.keys()
-	if keys.is_empty():
-		return
+	var setcell_count := 0
+	
+	# Calculate delta strips (only the tiles that changed)
+	var delta_left = min(old_rect.position.x, new_rect.position.x)
+	var delta_right = max(old_rect.end.x, new_rect.end.x)
+	var delta_top = min(old_rect.position.y, new_rect.position.y)
+	var delta_bottom = max(old_rect.end.y, new_rect.end.y)
+	
+	# 1. Clean up tiles exiting the view (Trailing Edge) - Only delta strips
+	# Left edge (if old rect was further left)
+	if old_rect.position.x < new_rect.position.x:
+		for y in range(old_rect.position.y, old_rect.end.y):
+			for x in range(old_rect.position.x, new_rect.position.x):
+				if setcell_count >= MAX_SETCELL_PER_FRAME:
+					pending_edge_patch_work.append({"action": "erase", "pos": Vector2i(x, y)})
+					continue
+				set_cell(Vector2i(x, y), -1)
+				setcell_count += 1
+	
+	# Right edge (if old rect was further right)
+	if old_rect.end.x > new_rect.end.x:
+		for y in range(old_rect.position.y, old_rect.end.y):
+			for x in range(new_rect.end.x, old_rect.end.x):
+				if setcell_count >= MAX_SETCELL_PER_FRAME:
+					pending_edge_patch_work.append({"action": "erase", "pos": Vector2i(x, y)})
+					continue
+				set_cell(Vector2i(x, y), -1)
+				setcell_count += 1
+	
+	# Top edge (if old rect was further up)
+	if old_rect.position.y < new_rect.position.y:
+		for y in range(old_rect.position.y, new_rect.position.y):
+			for x in range(old_rect.position.x, old_rect.end.x):
+				if setcell_count >= MAX_SETCELL_PER_FRAME:
+					pending_edge_patch_work.append({"action": "erase", "pos": Vector2i(x, y)})
+					continue
+				set_cell(Vector2i(x, y), -1)
+				setcell_count += 1
+	
+	# Bottom edge (if old rect was further down)
+	if old_rect.end.y > new_rect.end.y:
+		for y in range(new_rect.end.y, old_rect.end.y):
+			for x in range(old_rect.position.x, old_rect.end.x):
+				if setcell_count >= MAX_SETCELL_PER_FRAME:
+					pending_edge_patch_work.append({"action": "erase", "pos": Vector2i(x, y)})
+					continue
+				set_cell(Vector2i(x, y), -1)
+				setcell_count += 1
+
+	# 2. Draw tiles entering the view (Leading Edge) - Only delta strips
+	# Right edge (if new rect extends further right)
+	if new_rect.end.x > old_rect.end.x:
+		for y in range(new_rect.position.y, new_rect.end.y):
+			for x in range(old_rect.end.x, new_rect.end.x):
+				if setcell_count >= MAX_SETCELL_PER_FRAME:
+					pending_edge_patch_work.append({"action": "draw", "pos": Vector2i(x, y)})
+					continue
+				if not cleared_map.has(Vector2i(x, y)):
+					set_cell(Vector2i(x, y), fog_source_id, fog_atlas)
+					setcell_count += 1
+	
+	# Left edge (if new rect extends further left)
+	if new_rect.position.x < old_rect.position.x:
+		for y in range(new_rect.position.y, new_rect.end.y):
+			for x in range(new_rect.position.x, old_rect.position.x):
+				if setcell_count >= MAX_SETCELL_PER_FRAME:
+					pending_edge_patch_work.append({"action": "draw", "pos": Vector2i(x, y)})
+					continue
+				if not cleared_map.has(Vector2i(x, y)):
+					set_cell(Vector2i(x, y), fog_source_id, fog_atlas)
+					setcell_count += 1
+	
+	# Bottom edge (if new rect extends further down)
+	if new_rect.end.y > old_rect.end.y:
+		for y in range(old_rect.end.y, new_rect.end.y):
+			for x in range(new_rect.position.x, new_rect.end.x):
+				if setcell_count >= MAX_SETCELL_PER_FRAME:
+					pending_edge_patch_work.append({"action": "draw", "pos": Vector2i(x, y)})
+					continue
+				if not cleared_map.has(Vector2i(x, y)):
+					set_cell(Vector2i(x, y), fog_source_id, fog_atlas)
+					setcell_count += 1
+	
+	# Top edge (if new rect extends further up)
+	if new_rect.position.y < old_rect.position.y:
+		for y in range(new_rect.position.y, old_rect.position.y):
+			for x in range(new_rect.position.x, new_rect.end.x):
+				if setcell_count >= MAX_SETCELL_PER_FRAME:
+					pending_edge_patch_work.append({"action": "draw", "pos": Vector2i(x, y)})
+					continue
+				if not cleared_map.has(Vector2i(x, y)):
+					set_cell(Vector2i(x, y), fog_source_id, fog_atlas)
+					setcell_count += 1
+
+func _process_pending_edge_patch():
+	var setcell_count := 0
+	while setcell_count < MAX_SETCELL_PER_FRAME and not pending_edge_patch_work.is_empty():
+		var work = pending_edge_patch_work.pop_front()
+		var pos: Vector2i = work.get("pos", Vector2i.ZERO)
+		var action: String = work.get("action", "")
 		
-	var current_time := Time.get_ticks_msec() / 1000.0
-	var regrown_count := 0
-	
-	keys.shuffle() # Prevent directional bias
+		if action == "erase":
+			set_cell(pos, -1)
+		elif action == "draw":
+			if not cleared_map.has(pos):
+				set_cell(pos, fog_source_id, fog_atlas)
+		setcell_count += 1
 
-	for cell in keys:
-		if regrown_count >= max_regrow_per_frame:
-			break
-			
-		if not _is_boundary(cell):
-			frontier.erase(cell)
-			continue
-
-		var t_cleared = cleared.get(cell, 0.0)
-		if current_time - t_cleared < regrow_delay_s:
-			continue
-			
-		if randf() < regrow_chance:
-			_regrow_cell(cell)
-			regrown_count += 1
-
-func _regrow_cell(cell: Vector2i):
-	# Remove from tracking
-	cleared.erase(cell)
-	frontier.erase(cell)
-	
-	# Reset the tile to the fog sprite 
-	set_cell(cell, fog_source_id, fog_atlas)
-	
-	# JS Port: Update neighbors because the boundary has shifted 
-	_update_neighbors(cell)
-
-func _update_neighbors(cell: Vector2i):
-	var neighbors = [
-		Vector2i(cell.x - 1, cell.y),
-		Vector2i(cell.x + 1, cell.y),
-		Vector2i(cell.x, cell.y - 1),
-		Vector2i(cell.x, cell.y + 1)
-	]
-	for n in neighbors:
-		if cleared.has(n):
-			_update_frontier(n)
-
-
-func _fill_fog_rect(center: Vector2i, radius_x: int, radius_y: int, forget_radius_x: int, forget_radius_y: int) -> void:
-	for y in range(center.y - radius_y, center.y + radius_y + 1):
-		for x in range(center.x - radius_x, center.x + radius_x + 1):
-			var cell := Vector2i(x, y)
-			if cleared.has(cell):
-				continue
-			set_cell(cell, fog_source_id, fog_atlas)
-
-	for cell in cleared.keys():
-		if abs(cell.x - center.x) > forget_radius_x or abs(cell.y - center.y) > forget_radius_y:
-			cleared.erase(cell)
-
-
-# Performance and tracking variables from the JS build
-var frontier := {} # Changed from Array to Dictionary for O(1) performance
-var clear_stats := {"calls": 0, "drawn_holes": 0}
-
-# DEPRECATED: Use submit_request() instead
-func clear_fog_at_world(world_pos: Vector2) -> void:
-	var cell := local_to_map(to_local(world_pos))
-	clear_fog_at_cell(cell)
-
-func _update_frontier(cell: Vector2i):
-	# JS Port logic: only track cells that are on the boundary of the fog
-	if _is_boundary(cell):
-		# Dictionaries use assignment, not .append()
-		frontier[cell] = true
-	else:
+# --- Priority 3: Memory Management (Forget Logic) ---
+func _forget_distant_tiles(center: Vector2i):
+	var to_purge = []
+	for cell in cleared_map.keys():
+		# Use Manhattan distance for fast filtering 
+		if abs(cell.x - center.x) > forget_padding or abs(cell.y - center.y) > forget_padding:
+			to_purge.append(cell)
+	for cell in to_purge:
+		cleared_map.erase(cell)
 		frontier.erase(cell)
-
-func _is_boundary(cell: Vector2i) -> bool:
-	# Ported from JS isBoundary(): check 4-way neighbors
-	var neighbors = [
-		Vector2i(cell.x - 1, cell.y),
-		Vector2i(cell.x + 1, cell.y),
-		Vector2i(cell.x, cell.y - 1),
-		Vector2i(cell.x, cell.y + 1)
-	]
-	for n in neighbors:
-		if not cleared.has(n):
-			return true
-	return false
 	
-# DEPRECATED: Use submit_request() instead
-func clear_path(start_world: Vector2, end_world: Vector2, radius_px: float):
-	submit_request("laser", {
-		"origin_world": start_world,
-		"aim_angle": start_world.direction_to(end_world).angle(),
-		"focus": 1.0
-	})
+	# Proactive frontier pruning: Remove frontier cells outside active zone
+	var frontier_to_purge = []
+	for cell in frontier.keys():
+		if abs(cell.x - center.x) > forget_padding or abs(cell.y - center.y) > forget_padding:
+			frontier_to_purge.append(cell)
+	for cell in frontier_to_purge:
+		frontier.erase(cell)
+	
+	# Update cached frontier array if it exists
+	if not frontier_keys_array.is_empty():
+		frontier_keys_array = frontier.keys()
 
-# DEPRECATED: Use submit_request() instead  
-func clear_circle(world_pos: Vector2, radius_px: float):
-	# Legacy function - prefer submit_request for new code
-	_process_circle_stamp(world_pos, radius_px)
-
-# Helper function to consolidate clearing logic
-func clear_fog_at_cell(cell: Vector2i) -> void:
-	if not cleared.has(cell):
-		cleared[cell] = Time.get_ticks_msec() / 1000.0
-		set_cell(cell, -1)
-		clear_stats.calls += 1
-		_update_frontier(cell)
-
-# ============================================================================
-# REQUEST-BASED CLEARING API
-# ============================================================================
-
-# Submit a clearing request (beams call this, never mutate directly)
-func submit_request(shape_type: String, data: Dictionary) -> void:
-	clear_queue.append({"type": shape_type, "data": data})
-
-# Process queued clearing requests with per-frame budget
-func _process_clear_queue() -> void:
-	var processed: int = 0
-	while processed < max_clears_per_frame and not clear_queue.is_empty():
-		var request: Dictionary = clear_queue.pop_front()
-		var shape_type: String = request.get("type", "")
-		var data: Dictionary = request.get("data", {})
+# --- Priority 5: Fixed Request Processing (Budgeted) ---
+func _process_clear_queue():
+	var tiles_cleared_this_frame := 0
+	
+	while not clear_queue.is_empty() and tiles_cleared_this_frame < MAX_CLEAR_TILES_PER_FRAME:
+		var req = clear_queue.pop_front()
+		var type = req.get("type", "") 
+		var data = req.get("data", {})
 		
-		match shape_type:
+		match type:
 			"bubble":
-				_process_bubble_request(data)
-			"cone":
-				_process_cone_request(data)
+				var world_pos = data.get("center_world", Vector2.ZERO)
+				var r_px = data.get("bubble_tiles", 6.0) * LOGIC_TILE_SIZE.x
+				tiles_cleared_this_frame += _clear_circle_budgeted(world_pos, r_px, MAX_CLEAR_TILES_PER_FRAME - tiles_cleared_this_frame)
 			"laser":
-				_process_laser_request(data)
-		
-		processed += 1
+				var world_pos = data.get("origin_world", Vector2.ZERO)
+				var aim_angle = data.get("aim_angle", 0.0)
+				var focus = data.get("focus", 0.0)
+				tiles_cleared_this_frame += _clear_laser_budgeted(world_pos, aim_angle, focus, MAX_CLEAR_TILES_PER_FRAME - tiles_cleared_this_frame)
+			"cone":
+				var world_pos = data.get("origin_world", Vector2.ZERO)
+				var aim_angle = data.get("aim_angle", 0.0)
+				var focus = data.get("focus", 0.0)
+				var node_rotation = data.get("node_rotation", 0.0)
+				tiles_cleared_this_frame += _clear_cone_budgeted(world_pos, aim_angle, focus, node_rotation, MAX_CLEAR_TILES_PER_FRAME - tiles_cleared_this_frame)
+	
+	# If queue still has items, they'll be processed next frame (amortization)
 
-# ============================================================================
-# CONSOLIDATED CLEARING LOGIC (All gameplay reasoning in Top-Down Space)
-# ============================================================================
+func _clear_circle_budgeted(world_pos: Vector2, radius: float, max_tiles: int) -> int:
+	var center_tile = local_to_map(to_local(world_pos))
+	var t_radius = int(ceil(radius / LOGIC_TILE_SIZE.x))
+	var cleared_count := 0
+	
+	for dy in range(-t_radius, t_radius + 1):
+		for dx in range(-t_radius, t_radius + 1):
+			if cleared_count >= max_tiles:
+				return cleared_count
+			var tile = center_tile + Vector2i(dx, dy)
+			# Circular clear logic 
+			if Vector2(center_tile).distance_to(Vector2(tile)) <= t_radius:
+				if not cleared_map.has(tile):
+					cleared_map[tile] = Time.get_ticks_msec() / 1000.0
+					set_cell(tile, -1) 
+					_update_frontier(tile)
+					cleared_count += 1
+	return cleared_count
 
-# Bubble: Elliptical check in local space
-func _process_bubble_request(data: Dictionary) -> void:
-	var center_world: Vector2 = data.get("center_world", Vector2.ZERO)
-	var bubble_tiles: float = data.get("bubble_tiles", 6.0)
-	var node_rotation: float = data.get("node_rotation", 0.0)
-	
-	const MIASMA_TILE_X: float = 16.0
-	const MIASMA_TILE_Y: float = 8.0
-	
-	var center_cell: Vector2i = local_to_map(to_local(center_world))
-	var r_tiles_x: int = int(bubble_tiles)
-	var r_tiles_y: int = int(ceil(bubble_tiles * (MIASMA_TILE_X / MIASMA_TILE_Y)))
-	var rx: float = bubble_tiles * MIASMA_TILE_X
-	var ry: float = bubble_tiles * MIASMA_TILE_Y
-	
-	for dy in range(-r_tiles_y, r_tiles_y + 1):
-		for dx in range(-r_tiles_x, r_tiles_x + 1):
-			var cell: Vector2i = center_cell + Vector2i(dx, dy)
-			var cell_world: Vector2 = to_global(map_to_local(cell))
-			
-			# Convert to node's local space (accounting for rotation)
-			var cell_local: Vector2 = (cell_world - center_world).rotated(-node_rotation)
-			
-			# Elliptical distance check in local space
-			if ((cell_local.x * cell_local.x) / (rx * rx) + (cell_local.y * cell_local.y) / (ry * ry)) <= 1.0:
-				clear_fog_at_cell(cell)
-
-# Cone: Pixel-perfect polygon testing (matches beamcone.gd visuals exactly)
-func _process_cone_request(data: Dictionary) -> void:
-	var origin_world: Vector2 = data.get("origin_world", Vector2.ZERO)
-	var aim_angle: float = data.get("aim_angle", 0.0)
-	var focus: float = data.get("focus", 0.0)
-	var node_rotation: float = data.get("node_rotation", 0.0)
-	
-	const CONE_MIN_LENGTH_TILES: float = 6.0
-	const CONE_MAX_LENGTH_TILES: float = 18.0
-	const CONE_MIN_ANGLE: float = deg_to_rad(10.0)
-	const CONE_MAX_ANGLE: float = deg_to_rad(60.0)
-	const MIASMA_TILE_X: float = 16.0
-	
-	# Calculate cone geometry in top-down space (exactly matching beamcone.gd _draw())
-	var t: float = clamp(focus, 0.0, 1.0)
-	var length_px: float = lerp(CONE_MIN_LENGTH_TILES, CONE_MAX_LENGTH_TILES, t) * MIASMA_TILE_X
-	var half_angle: float = lerp(CONE_MAX_ANGLE, CONE_MIN_ANGLE, t)
-	
-	var forward: Vector2 = Vector2.RIGHT.rotated(aim_angle)
-	var left_td: Vector2 = forward.rotated(half_angle) * length_px
-	var right_td: Vector2 = forward.rotated(-half_angle) * length_px
-	
-	if left_td.cross(right_td) < 0.0:
-		var tmp: Vector2 = left_td
-		left_td = right_td
-		right_td = tmp
-	
-	# Body triangle: [Vector2.ZERO, left_td, right_td] in top-down space
-	var body_triangle: PackedVector2Array = PackedVector2Array([Vector2.ZERO, left_td, right_td])
-	
-	# Cap semicircle: center and radius in top-down space
-	var cap_center_td: Vector2 = (left_td + right_td) * 0.5
-	var cap_radius_td: float = (right_td - left_td).length() * 0.5
-	
-	# Semicircle angle range (used for both bounding box and cap test)
-	var angle_min: float = aim_angle - PI * 0.5
-	var angle_max: float = aim_angle + PI * 0.5
-	
-	# Calculate bounding box in world space (encompass entire cone)
-	# Project triangle vertices and cap extent to world space via isometric
-	var world_points: PackedVector2Array = PackedVector2Array()
-	world_points.append(origin_world + IsoMath.to_iso(Vector2.ZERO))
-	world_points.append(origin_world + IsoMath.to_iso(left_td))
-	world_points.append(origin_world + IsoMath.to_iso(right_td))
-	
-	# Add cap bounding box (semicircle extends from angle_min to angle_max)
-	var cap_world: Vector2 = origin_world + IsoMath.to_iso(cap_center_td)
-	# Include semicircle extremes
-	world_points.append(cap_world)
-	world_points.append(origin_world + IsoMath.to_iso(cap_center_td + Vector2(cos(angle_min), sin(angle_min)) * cap_radius_td))
-	world_points.append(origin_world + IsoMath.to_iso(cap_center_td + Vector2(cos(angle_max), sin(angle_max)) * cap_radius_td))
-	world_points.append(origin_world + IsoMath.to_iso(cap_center_td + forward * cap_radius_td))
-	
-	# Find bounding box
-	var min_x: float = world_points[0].x
-	var max_x: float = world_points[0].x
-	var min_y: float = world_points[0].y
-	var max_y: float = world_points[0].y
-	for pt in world_points:
-		min_x = min(min_x, pt.x)
-		max_x = max(max_x, pt.x)
-		min_y = min(min_y, pt.y)
-		max_y = max(max_y, pt.y)
-	
-	# Expand bounding box by one tile to ensure coverage
-	var tile_size: Vector2i = tile_set.tile_size
-	min_x -= tile_size.x
-	max_x += tile_size.x
-	min_y -= tile_size.y
-	max_y += tile_size.y
-	
-	# Convert bounding box to tile coordinates
-	var min_cell: Vector2i = local_to_map(to_local(Vector2(min_x, min_y)))
-	var max_cell: Vector2i = local_to_map(to_local(Vector2(max_x, max_y)))
-	
-	# Track clears to respect budget (check all tiles, but limit actual clears)
-	var clears_this_frame: int = 0
-	
-	# Scan all tiles in bounding box
-	for y in range(min_cell.y, max_cell.y + 1):
-		for x in range(min_cell.x, max_cell.x + 1):
-			# Respect per-frame budget (stop if we've cleared enough)
-			if clears_this_frame >= max_clears_per_frame:
-				return
-			
-			var cell: Vector2i = Vector2i(x, y)
-			
-			# Skip if already cleared (optimization)
-			if cleared.has(cell):
-				continue
-			
-			# Convert tile center to world space, then to beam's local top-down space
-			var cell_world: Vector2 = to_global(map_to_local(cell))
-			
-			# Account for node rotation (same as draw_set_transform cancellation: -global_rotation)
-			var cell_local_iso: Vector2 = (cell_world - origin_world).rotated(-node_rotation)
-			
-			# Convert from isometric visual space back to top-down space
-			var cell_td: Vector2 = IsoMath.from_iso(cell_local_iso)
-			
-			# Test 1: Body triangle (in top-down space)
-			var in_body: bool = Geometry2D.is_point_in_polygon(cell_td, body_triangle)
-			
-			# Test 2: Cap semicircle (in top-down space)
-			var in_cap: bool = false
-			var offset_td: Vector2 = cell_td - cap_center_td
-			var dist_to_cap: float = offset_td.length()
-			
-			if dist_to_cap <= cap_radius_td:
-				# Check if point is "forward" of cap center (semicircle constraint)
-				# The semicircle spans from angle_min to angle_max (already calculated above)
-				var angle_to_point: float = offset_td.angle()
-				
-				# Normalize angle to [angle_min, angle_max] range
-				if angle_to_point < angle_min - PI:
-					angle_to_point += TAU
-				elif angle_to_point > angle_max + PI:
-					angle_to_point -= TAU
-				
-				if angle_to_point >= angle_min and angle_to_point <= angle_max:
-					in_cap = true
-			
-			# Clear if point is in either body or cap
-			if in_body or in_cap:
-				clear_fog_at_cell(cell)
-				clears_this_frame += 1
-
-# Laser: Path clearing
-func _process_laser_request(data: Dictionary) -> void:
-	var origin_world: Vector2 = data.get("origin_world", Vector2.ZERO)
-	var aim_angle: float = data.get("aim_angle", 0.0)
-	var focus: float = data.get("focus", 0.0)
-	
-	const LASER_MIN_LENGTH_TILES: float = 10.0
-	const LASER_MAX_LENGTH_TILES: float = 22.0
-	const LASER_MIN_HALF_WIDTH_TILES: float = 0.35
-	const LASER_MAX_HALF_WIDTH_TILES: float = 0.90
-	const MIASMA_TILE_X: float = 16.0
+func _clear_laser_budgeted(world_pos: Vector2, aim_angle: float, focus: float, max_tiles: int) -> int:
+	# Laser: Oriented Bounding Box (OBB) - rectangle polygon
+	const LASER_MIN_LENGTH_TILES := 10.0
+	const LASER_MAX_LENGTH_TILES := 22.0
+	const LASER_MIN_HALF_WIDTH_TILES := 0.35
+	const LASER_MAX_HALF_WIDTH_TILES := 0.90
+	const MIASMA_TILE_X := 16.0
 	
 	var t: float = clamp(focus, 0.0, 1.0)
 	var length_px: float = lerp(LASER_MIN_LENGTH_TILES, LASER_MAX_LENGTH_TILES, t) * MIASMA_TILE_X
 	var half_w_px: float = lerp(LASER_MIN_HALF_WIDTH_TILES, LASER_MAX_HALF_WIDTH_TILES, t) * MIASMA_TILE_X
 	
-	# Calculate path in top-down space
-	var dir_td: Vector2 = Vector2.RIGHT.rotated(aim_angle)
-	var start_world: Vector2 = origin_world
-	var end_world: Vector2 = origin_world + IsoMath.to_iso(dir_td * length_px)
+	var origin_td := world_pos
+	var dir_td := Vector2.RIGHT.rotated(aim_angle)
+	var perp_td := dir_td.orthogonal().normalized()
 	
-	# Step along path
-	var step_size: float = tile_set.tile_size.x * 0.5
-	var dist: float = start_world.distance_to(end_world)
-	var steps: int = int(dist / step_size)
+	var p0 := origin_td
+	var p1 := origin_td + dir_td * length_px
 	
-	for i in range(steps + 1):
-		var step_t: float = float(i) / float(steps) if steps > 0 else 0.0
-		var stamp_pos: Vector2 = start_world.lerp(end_world, step_t)
-		_process_circle_stamp(stamp_pos, half_w_px)
-
-# Helper: Process a circular stamp (elliptical for isometric)
-func _process_circle_stamp(world_pos: Vector2, radius_px: float) -> void:
-	var local_pos: Vector2 = to_local(world_pos)
-	var center_cell: Vector2i = local_to_map(local_pos)
+	# Calculate bounding box in tile space
+	var corners = [
+		p0 + perp_td * half_w_px,
+		p0 - perp_td * half_w_px,
+		p1 - perp_td * half_w_px,
+		p1 + perp_td * half_w_px
+	]
 	
-	# Scale tile radius to match the 16:8 (2:1) isometric grid ratio
-	var tile_r_x: int = int(ceil(radius_px / 16.0))
-	var tile_r_y: int = int(ceil((radius_px * 0.5) / 8.0))
+	var min_x = corners[0].x
+	var max_x = corners[0].x
+	var min_y = corners[0].y
+	var max_y = corners[0].y
+	for corner in corners:
+		min_x = min(min_x, corner.x)
+		max_x = max(max_x, corner.x)
+		min_y = min(min_y, corner.y)
+		max_y = max(max_y, corner.y)
 	
-	for dy in range(-tile_r_y, tile_r_y + 1):
-		for dx in range(-tile_r_x, tile_r_x + 1):
-			var normalized_x: float = float(dx) / float(tile_r_x) if tile_r_x > 0 else 0.0
-			var normalized_y: float = float(dy) / float(tile_r_y) if tile_r_y > 0 else 0.0
+	# Convert to tile coordinates
+	var min_tile = local_to_map(to_local(Vector2(min_x, min_y)))
+	var max_tile = local_to_map(to_local(Vector2(max_x, max_y)))
+	
+	var cleared_count := 0
+	
+	# Iterate through bounding box and check if tile center is inside laser rectangle
+	for ty in range(min_tile.y - 1, max_tile.y + 2):
+		for tx in range(min_tile.x - 1, max_tile.x + 2):
+			if cleared_count >= max_tiles:
+				return cleared_count
 			
-			# Elliptical distance check
-			if (normalized_x * normalized_x) + (normalized_y * normalized_y) <= 1.0:
-				var target_cell: Vector2i = center_cell + Vector2i(dx, dy)
-				clear_fog_at_cell(target_cell)
+			var tile = Vector2i(tx, ty)
+			var tile_local_center = map_to_local(tile) + Vector2(LOGIC_TILE_SIZE) * 0.5
+			var tile_world_center = to_global(tile_local_center)
+			
+			# Check if tile center is inside laser rectangle using segment-distance check
+			var ab := p1 - p0
+			var ap: Vector2 = tile_world_center - p0
+			var ab_len_sq := ab.length_squared()
+			
+			if ab_len_sq > 0.0:
+				var u: float = clamp(ap.dot(ab) / ab_len_sq, 0.0, 1.0)
+				var closest: Vector2 = p0 + ab * u
+				var dist_to_segment := tile_world_center.distance_to(closest)
+				
+				if dist_to_segment <= half_w_px:
+					if not cleared_map.has(tile):
+						cleared_map[tile] = Time.get_ticks_msec() / 1000.0
+						set_cell(tile, -1)
+						_update_frontier(tile)
+						cleared_count += 1
+	
+	return cleared_count
+
+func _clear_cone_budgeted(world_pos: Vector2, aim_angle: float, focus: float, node_rotation: float, max_tiles: int) -> int:
+	# Cone: Triangle + Arc polygon
+	const CONE_MIN_LENGTH_TILES := 6
+	const CONE_MAX_LENGTH_TILES := 18
+	const CONE_MIN_ANGLE := deg_to_rad(10.0)
+	const CONE_MAX_ANGLE := deg_to_rad(60.0)
+	const MIASMA_TILE_X := 16.0
+	
+	var t: float = clamp(focus, 0.0, 1.0)
+	var length: float = lerp(float(CONE_MIN_LENGTH_TILES), float(CONE_MAX_LENGTH_TILES), t) * MIASMA_TILE_X
+	var half_angle: float = lerp(CONE_MAX_ANGLE, CONE_MIN_ANGLE, t)
+	
+	var forward := Vector2.RIGHT.rotated(aim_angle)
+	var left_td := forward.rotated(half_angle) * length
+	var right_td := forward.rotated(-half_angle) * length
+	
+	if left_td.cross(right_td) < 0.0:
+		var tmp := left_td
+		left_td = right_td
+		right_td = tmp
+	
+	var origin_td := world_pos
+	var left_end := origin_td + left_td
+	var right_end := origin_td + right_td
+	
+	# Cap center and radius for arc
+	var cap_center_td := (left_end + right_end) * 0.5
+	var cap_radius := (right_end - left_end).length() * 0.5
+	
+	# Calculate bounding box
+	var corners = [origin_td, left_end, right_end]
+	var min_x = corners[0].x
+	var max_x = corners[0].x
+	var min_y = corners[0].y
+	var max_y = corners[0].y
+	for corner in corners:
+		min_x = min(min_x, corner.x - cap_radius)
+		max_x = max(max_x, corner.x + cap_radius)
+		min_y = min(min_y, corner.y - cap_radius)
+		max_y = max(max_y, corner.y + cap_radius)
+	
+	var min_tile = local_to_map(to_local(Vector2(min_x, min_y)))
+	var max_tile = local_to_map(to_local(Vector2(max_x, max_y)))
+	
+	var cleared_count := 0
+	
+	# Iterate through bounding box and check if tile is inside cone
+	for ty in range(min_tile.y - 1, max_tile.y + 2):
+		for tx in range(min_tile.x - 1, max_tile.x + 2):
+			if cleared_count >= max_tiles:
+				return cleared_count
+			
+			var tile = Vector2i(tx, ty)
+			var tile_local_center = map_to_local(tile) + Vector2(LOGIC_TILE_SIZE) * 0.5
+			var tile_world_center = to_global(tile_local_center)
+			
+			# Check if tile center is inside triangle (body)
+			var v0 := origin_td
+			var v1 := left_end
+			var v2 := right_end
+			var p: Vector2 = tile_world_center
+			
+			var d1 := (p.x - v2.x) * (v1.y - v2.y) - (v1.x - v2.x) * (p.y - v2.y)
+			var d2 := (p.x - v0.x) * (v2.y - v0.y) - (v2.x - v0.x) * (p.y - v0.y)
+			var d3 := (p.x - v1.x) * (v0.y - v1.y) - (v0.x - v1.x) * (p.y - v1.y)
+			
+			var has_neg := (d1 < 0) or (d2 < 0) or (d3 < 0)
+			var has_pos := (d1 > 0) or (d2 > 0) or (d3 > 0)
+			var in_triangle := not (has_neg and has_pos)
+			
+			# Check if tile center is inside arc (cap)
+			var dist_to_cap_center := tile_world_center.distance_to(cap_center_td)
+			var in_arc := dist_to_cap_center <= cap_radius
+			
+			if in_triangle or in_arc:
+				if not cleared_map.has(tile):
+					cleared_map[tile] = Time.get_ticks_msec() / 1000.0
+					set_cell(tile, -1)
+					_update_frontier(tile)
+					cleared_count += 1
+	
+	return cleared_count
+
+# --- Frontier & Regrow ---
+func _update_frontier(cell: Vector2i):
+	if _is_boundary(cell): 
+		frontier[cell] = true
+	else: 
+		frontier.erase(cell)
+
+func _is_boundary(cell: Vector2i) -> bool:
+	var neighbors = [
+		cell + Vector2i(1, 0), cell + Vector2i(-1, 0), 
+		cell + Vector2i(0, 1), cell + Vector2i(0, -1)
+	]
+	for n in neighbors:
+		if not cleared_map.has(n): return true
+	return false
+
+func _process_regrow():
+	# Amortized frontier processing: Only check MAX_FRONTIER_CHECKS_PER_FRAME cells per frame
+	if frontier_keys_array.is_empty() or frontier_iterator_index >= frontier_keys_array.size():
+		# Refresh cached array and reset iterator
+		frontier_keys_array = frontier.keys()
+		frontier_iterator_index = 0
+	
+	if frontier_keys_array.is_empty():
+		return
+	
+	var current_time = Time.get_ticks_msec() / 1000.0
+	var checks_this_frame := 0
+	var start_index = frontier_iterator_index
+	
+	# Process up to MAX_FRONTIER_CHECKS_PER_FRAME cells
+	while checks_this_frame < MAX_FRONTIER_CHECKS_PER_FRAME and frontier_iterator_index < frontier_keys_array.size():
+		var cell: Vector2i = frontier_keys_array[frontier_iterator_index]
+		frontier_iterator_index += 1
+		checks_this_frame += 1
+		
+		# Verify cell still exists in frontier (it might have been removed)
+		if not frontier.has(cell):
+			continue
+		
+		var t_cleared = cleared_map.get(cell, 0.0)
+		if current_time - t_cleared > 1.0 and randf() < 0.6:
+			cleared_map.erase(cell)
+			frontier.erase(cell)
+			set_cell(cell, fog_source_id, fog_atlas)
+			
+			# Remove from cached array if it still exists
+			var idx = frontier_keys_array.find(cell)
+			if idx >= 0:
+				frontier_keys_array.remove_at(idx)
+				if frontier_iterator_index > idx:
+					frontier_iterator_index -= 1
+
+func submit_request(shape_type: String, data: Dictionary) -> void:
+	clear_queue.append({"type": shape_type, "data": data})

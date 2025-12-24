@@ -1,40 +1,14 @@
 extends Node2D
 
-@export var bubble_tiles := 6
-@export var MAX_BUBBLE_TILES := 8
+@export var bubble_tiles := 0
+@export var MAX_BUBBLE_TILES := 12
 
-const MIASMA_TILE_X := 16.0
-const MIASMA_TILE_Y := 8.0
-
-@onready var miasma = get_tree().get_first_node_in_group("miasma")
-
-func _draw():
-	# LAW #7: Cancel node rotation so shape is ground-locked (visual only)
-	draw_set_transform(
-		Vector2.ZERO,
-		-global_rotation,
-		Vector2.ONE
-	)
-
-	var rx := bubble_tiles * MIASMA_TILE_X
-	var ry := bubble_tiles * MIASMA_TILE_Y
-
-	var steps := 32 # Reduced from 48 for minor optimization
-	var pts := PackedVector2Array()
-
-	for i in range(steps):
-		var a := TAU * float(i) / float(steps)
-		pts.append(Vector2(cos(a) * rx, sin(a) * ry))
-
-	draw_colored_polygon(pts, Color(1, 1, 0, 0.25))
-
+# Submit clearing requests to miasma (intent-only, no mutation)
 func _process(_delta):
-	if not visible or not miasma:
-		return
-	
-	# LAW #5: Submit clearing request (Intent → Truth → Projection flow)
-	miasma.submit_request("bubble", {
-		"center_world": global_position,
-		"bubble_tiles": float(bubble_tiles),
-		"node_rotation": global_rotation
-	})
+	if bubble_tiles > 0:
+		var miasma = get_tree().get_first_node_in_group("miasma")
+		if miasma:
+			miasma.submit_request("bubble", {
+				"center_world": global_position,
+				"bubble_tiles": float(bubble_tiles)
+			})
