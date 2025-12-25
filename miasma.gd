@@ -73,16 +73,22 @@ func _process_regrow():
 			frontier.erase(cell)
 			continue
 
-		var t_cleared = cleared.get(cell, 0.0)
-		if current_time - t_cleared < regrow_delay_s:
+		# Get timestamp from cleared_cells (world-space truth) with cleared as fallback
+		var cell_world_pos := to_global(map_to_local(cell))
+		var world_tile_coord := _world_pos_to_tile_coord(cell_world_pos)
+		var t_cleared = cleared_cells.get(world_tile_coord, cleared.get(cell, 0.0))
+		if t_cleared == 0.0 or (current_time - t_cleared < regrow_delay_s):
 			continue
 			
 		if randf() < regrow_chance:
 			_regrow_cell(cell)
 
 func _regrow_cell(cell: Vector2i):
-	# Remove from tracking
+	# Remove from tracking (both local and world-space)
 	cleared.erase(cell)
+	var cell_world_pos := to_global(map_to_local(cell))
+	var world_tile_coord := _world_pos_to_tile_coord(cell_world_pos)
+	cleared_cells.erase(world_tile_coord)
 	frontier.erase(cell)
 	
 	# Reset the tile to the fog sprite 
@@ -99,7 +105,10 @@ func _update_neighbors(cell: Vector2i):
 		Vector2i(cell.x, cell.y + 1)
 	]
 	for n in neighbors:
-		if cleared.has(n):
+		# Check cleared_cells (world-space truth) with cleared as fallback
+		var n_world_pos := to_global(map_to_local(n))
+		var n_world_tile := _world_pos_to_tile_coord(n_world_pos)
+		if cleared_cells.has(n_world_tile) or cleared.has(n):
 			_update_frontier(n)
 
 
