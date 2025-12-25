@@ -19,7 +19,6 @@ var last_center := Vector2i(999999, 999999)
 # JS Port: Regrow configuration
 @export var regrow_chance := 0.6 # 60% chance per check 
 @export var regrow_delay_s := 1.0 # Wait 1 second before regrowing 
-@export var max_regrow_per_frame := 10 # Budget to prevent lag 
 
 # Cells we have "carved out" (world-anchored)
 # Dictionary: Vector2i -> float (timestamp) 
@@ -61,7 +60,6 @@ func _process_regrow():
 		return
 		
 	var current_time := Time.get_ticks_msec() / 1000.0
-	var regrown_count := 0
 	
 	# Create a temporary copy to avoid shifting indices during the loop
 	var current_frontier = frontier.duplicate()
@@ -69,9 +67,6 @@ func _process_regrow():
 	current_frontier.shuffle()
 
 	for cell in current_frontier:
-		if regrown_count >= max_regrow_per_frame:
-			break
-			
 		# CRITICAL: Re-verify this is still an edge before regrowing.
 		# This prevents "floating" fog tiles from appearing in the middle of cleared areas.
 		if not _is_boundary(cell):
@@ -84,7 +79,6 @@ func _process_regrow():
 			
 		if randf() < regrow_chance:
 			_regrow_cell(cell)
-			regrown_count += 1
 
 func _regrow_cell(cell: Vector2i):
 	# Remove from tracking
