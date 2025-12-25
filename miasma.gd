@@ -145,10 +145,11 @@ func _world_pos_to_tile_coord(world_pos: Vector2) -> Vector2i:
 func _clear_fog_at_world(world_pos: Vector2) -> void:
 	var cell := local_to_map(to_local(world_pos))
 	var world_tile_coord := _world_pos_to_tile_coord(world_pos)
+	var timestamp := Time.get_ticks_msec() / 1000.0
 	
 	if not cleared.has(cell):
-		cleared[cell] = Time.get_ticks_msec() / 1000.0 # Ported JS timestamping
-		cleared_cells[world_tile_coord] = true # Store world-space truth
+		cleared[cell] = timestamp # Ported JS timestamping
+		cleared_cells[world_tile_coord] = timestamp # Store world-space truth with timestamp
 		set_cell(cell, -1)
 		clear_stats.calls += 1
 		_update_frontier(cell)
@@ -162,7 +163,7 @@ func _update_frontier(cell: Vector2i):
 		frontier.erase(cell)
 
 func _is_boundary(cell: Vector2i) -> bool:
-	# Ported from JS isBoundary(): check 4-way neighbors
+	# Check 4-way neighbors against cleared_cells (world-space truth) with cleared as fallback
 	var neighbors = [
 		Vector2i(cell.x - 1, cell.y),
 		Vector2i(cell.x + 1, cell.y),
@@ -170,6 +171,10 @@ func _is_boundary(cell: Vector2i) -> bool:
 		Vector2i(cell.x, cell.y + 1)
 	]
 	for n in neighbors:
-		if not cleared.has(n):
+		# Convert neighbor cell to world-space tile coordinate
+		var n_world_pos := to_global(map_to_local(n))
+		var n_world_tile := _world_pos_to_tile_coord(n_world_pos)
+		# Check cleared_cells first (world-space truth), fallback to cleared for safety
+		if not cleared_cells.has(n_world_tile) and not cleared.has(n):
 			return true
 	return false
