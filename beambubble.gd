@@ -86,11 +86,11 @@ func _clear_miasma():
 	for dy in range(-r_tiles_y, r_tiles_y + 1):
 		for dx in range(-r_tiles_x, r_tiles_x + 1):
 			var cell := center_cell + Vector2i(dx, dy)
-			var world_pos: Vector2 = miasma.to_global(
+			var cell_world_pos: Vector2 = miasma.to_global(
 				miasma.map_to_local(cell)
 			)
 
-			var local := to_local(world_pos)
+			var local := to_local(cell_world_pos)
 
 			if (
 				(local.x * local.x) / (rx * rx) +
@@ -98,7 +98,7 @@ func _clear_miasma():
 			) > 1.0:
 				continue
 
-			miasma.submit_request(miasma.RequestType.BUBBLE, world_pos)
+			miasma.submit_request(miasma.RequestType.BUBBLE, Vector2(cell.x, cell.y))
 			
 
 func _process(_delta):

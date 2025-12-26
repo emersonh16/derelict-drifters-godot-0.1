@@ -23,7 +23,6 @@ sources/0 = SubResource("TileSetAtlasSource_dwbse")
 
 [node name="World" type="Node2D"]
 y_sort_enabled = true
-position = Vector2(0, -8)
 metadata/_edit_vertical_guides_ = [-1758.0]
 
 [node name="Ground" type="TileMapLayer" parent="."]
